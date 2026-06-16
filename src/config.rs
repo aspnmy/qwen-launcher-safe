@@ -33,6 +33,10 @@ pub struct LauncherConfig {
     /// 监控轮询间隔（秒），默认 10
     #[serde(rename = "monitorIntervalSec", default = "default_interval")]
     pub monitor_interval_sec: u64,
+
+    /// Qwen 工作目录（使子进程能加载指定目录下的 .qwen/skills/ 技能）
+    #[serde(rename = "workingDir", default)]
+    pub working_dir: Option<String>,
 }
 
 const fn default_memory() -> u64 {
@@ -48,6 +52,7 @@ impl Default for LauncherConfig {
             qwen_path: None,
             max_memory_mb: default_memory(),
             monitor_interval_sec: default_interval(),
+            working_dir: None,
         }
     }
 }

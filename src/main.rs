@@ -87,6 +87,9 @@ enum Cli {
         /// 监控轮询间隔（秒）
         #[arg(long)]
         monitor_interval: Option<u64>,
+        /// Qwen 工作目录（使子进程加载该目录下的 .qwen/skills/ 技能）
+        #[arg(long)]
+        working_dir: Option<String>,
         /// 显示当前配置
         #[arg(long)]
         show: bool,
@@ -108,7 +111,7 @@ fn interactive_setup() -> ExitCode {
     println!();
 
     // ── 步骤 1：Qwen 路径 ──
-    println!("[步骤 1/3] Qwen 可执行文件路径");
+    println!("[步骤 1/4] Qwen 可执行文件路径");
     print!("  请输入 qwen.exe 或 qwen.cmd 的完整路径: ");
     stdout().flush().ok();
     let mut line = String::new();
@@ -128,7 +131,7 @@ fn interactive_setup() -> ExitCode {
 
     // ── 步骤 2：内存限制 ──
     println!();
-    println!("[步骤 2/3] 最大内存限制 (MB) [默认 1024]");
+    println!("[步骤 2/4] 最大内存限制 (MB) [默认 1024]");
     print!("  请输入: ");
     stdout().flush().ok();
     let mut line = String::new();
@@ -142,7 +145,7 @@ fn interactive_setup() -> ExitCode {
 
     // ── 步骤 3：监控间隔 ──
     println!();
-    println!("[步骤 3/3] 监控轮询间隔 (秒) [默认 10]");
+    println!("[步骤 3/4] 监控轮询间隔 (秒) [默认 10]");
     print!("  请输入: ");
     stdout().flush().ok();
     let mut line = String::new();
@@ -154,14 +157,38 @@ fn interactive_setup() -> ExitCode {
         line.parse::<u64>().unwrap_or(10)
     };
 
+    // ── 步骤 4：工作目录（可选） ──
+    println!();
+    println!("[步骤 4/4] Qwen 工作目录（使子进程加载该目录下的 .qwen/skills/ 技能）");
+    print!("  请输入（或留空使用默认）: ");
+    stdout().flush().ok();
+    let mut line = String::new();
+    stdin().read_line(&mut line).ok();
+    let line = normalize_input(&line).trim().trim_matches('"').trim().to_string();
+    let working_dir = if line.is_empty() {
+        None
+    } else {
+        let path = std::path::Path::new(&line);
+        if path.is_dir() {
+            Some(line)
+        } else {
+            eprintln!("  [警告] 目录不存在，将跳过 workingDir 配置");
+            None
+        }
+    };
+
     // ── 写入配置 ──
     let mut cfg = config::LauncherConfig {
         qwen_path: None,
         max_memory_mb,
         monitor_interval_sec: monitor_interval,
+        working_dir: None,
     };
     if let Some(ref path) = qwen_path {
         cfg.qwen_path = Some(path.clone());
+    }
+    if let Some(ref wd) = working_dir {
+        cfg.working_dir = Some(wd.clone());
     }
 
     println!();
@@ -199,8 +226,9 @@ fn main() -> ExitCode {
             qwen_path,
             max_memory_mb,
             monitor_interval,
+            working_dir,
             show,
-        }) => cmd_init_config(qwen_path, max_memory_mb, monitor_interval, show),
+        }) => cmd_init_config(qwen_path, max_memory_mb, monitor_interval, working_dir, show),
         Err(e) => {
             // 双击 .exe 无参：缺少子命令 → 默认走 launch
             if e.kind() == clap::error::ErrorKind::MissingSubcommand {
@@ -225,6 +253,7 @@ fn cmd_init_config(
     qwen_path: Option<String>,
     max_memory_mb: Option<u64>,
     monitor_interval: Option<u64>,
+    working_dir: Option<String>,
     show: bool,
 ) -> ExitCode {
     if show {
@@ -252,6 +281,16 @@ fn cmd_init_config(
     }
     if let Some(i) = monitor_interval {
         cfg.monitor_interval_sec = i;
+        changed = true;
+    }
+    if let Some(w) = working_dir {
+        let w = normalize_input(&w).trim_matches('"').to_string();
+        let path = std::path::Path::new(&w);
+        if !path.is_dir() {
+            eprintln!("目录不存在: {}", w);
+            return ExitCode::from(1);
+        }
+        cfg.working_dir = Some(w);
         changed = true;
     }
 

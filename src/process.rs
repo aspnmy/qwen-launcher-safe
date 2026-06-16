@@ -129,13 +129,20 @@ pub fn bind_cpu_core(_pid: u32, _core_index: u32) -> io::Result<()> {
 }
 
 /// 启动 Qwen 进程，继承当前控制台的 stdin/stdout/stderr
-pub fn spawn_qwen(cmd: &PathBuf, args: &[String]) -> io::Result<Child> {
-    Command::new(cmd)
+///
+/// `cwd` 为可选工作目录，设置后子进程在此目录下运行，
+/// 确保能找到该目录下的 `.qwen/skills/` 等配置。
+pub fn spawn_qwen(cmd: &PathBuf, args: &[String], cwd: Option<&std::path::Path>) -> io::Result<Child> {
+    let mut command = Command::new(cmd);
+    command
         .args(args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
+        .stderr(Stdio::inherit());
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
+    }
+    command.spawn()
 }
 
 /// 返回当前可执行文件路径（用于自调用生成 monitor 子进程）

@@ -44,6 +44,13 @@ pub fn run(args: &[String]) -> ExitCode {
         }
     };
 
+    // 读取工作目录配置（使子进程能加载对应目录下的 .qwen/skills/ 技能）
+    let cfg = config::read_config();
+    let working_dir = cfg.working_dir.as_ref().map(std::path::PathBuf::from);
+    if let Some(ref wd) = working_dir {
+        info!("Qwen 工作目录: {:?}", wd);
+    }
+
     // 1. 基线记录
     let mut sys = sysinfo::System::new_all();
     sys.refresh_all();
@@ -51,7 +58,7 @@ pub fn run(args: &[String]) -> ExitCode {
     info!("基线 Qwen 进程: {} 个", baseline.len());
 
     // 2. 非阻塞启动 Qwen
-    let qwen_child = match process::spawn_qwen(&qwen_cmd, args) {
+    let qwen_child = match process::spawn_qwen(&qwen_cmd, args, working_dir.as_deref()) {
         Ok(child) => {
             info!("Qwen PID: {}", child.id());
             child
