@@ -29,7 +29,15 @@ qwen-launcher-safe init
 - **Signal Handling** — On Ctrl+C, resources are cleaned up gracefully (monitor stopped, instances unregistered) via an atomic flag-driven signal handler.
 - **Load-balanced Core Allocation** — When all CPU cores are occupied, new instances are distributed to the least-loaded core rather than all falling back to core 0.
 - **Config Fault Tolerance** — Corrupted `config.json` produces a warning log and falls back to defaults instead of panicking or silently returning zero values.
-- **Linux Compatibility** — State file path supports Unix (`/tmp/qwen-resource-state.json`) with `XDG_RUNTIME_DIR` / `TMPDIR` fallback.
+- **Linux Compatibility** — State file path supports Unix (`/tmp/qwen-resource-state.json`) with `XDG_RUNTIME_DIR` / `TMPDIR` fallback; CPU binding via `sched_setaffinity`; SIGTERM signal handler alongside Ctrl+C.
+- **Cross-process File Lock** — All read-modify-write operations on the shared state file are protected by an `fs2::FileExt::lock_exclusive()` guard, preventing concurrent core allocation conflicts and registration loss.
+- **Stale Instance Cleanup** — On startup and during monitoring cycles, crashed instances (PIDs that no longer exist in the process table) are automatically removed from the shared state file.
+- **Orphan Monitor Prevention** — The background monitor child process tracks its parent PID and auto-exits when the parent (launcher) dies, preventing orphan processes.
+- **Executable Validation** — `spawn_qwen()` validates that the configured path is a real executable before launching, returning `InvalidInput` instead of failing at runtime.
+- **Timeout Force-Kill** — If Qwen processes don't exit within 24 hours, the launcher force-terminates them instead of waiting indefinitely.
+- **Progress Feedback** — During the child process discovery polling window, progress messages are logged every ~0.9s so users see activity rather than a silent 5-second wait.
+- **Dashboard I/O Optimization** — The real-time console dashboard reads the shared state file once per refresh cycle instead of re-reading it, reducing file I/O by ~50% during monitoring.
+- **Test Suite** — 46 unit tests covering all modules: core allocation, process discovery, state file I/O, config read/write, input normalization, interactive setup wizard, and stale instance cleanup.
 
 ## CI Pipeline
 
