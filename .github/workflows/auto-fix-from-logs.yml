@@ -132,6 +132,8 @@ jobs:
           - Commit: ${{ github.event.workflow_run.head_sha }}
           - Branch: ${{ github.event.workflow_run.head_branch }}"
           git push origin "$BRANCH"
+          # 确保 auto-fix 标签存在
+          gh label create "auto-fix" --description "Auto-fix from CI logs" --force 2>/dev/null || true
           # 检查是否已有同名 PR
           EXISTING=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null)
           if [ -z "$EXISTING" ]; then
@@ -149,7 +151,7 @@ jobs:
             $(git diff --stat)
             \`\`\`
             " \
-              --label "auto-fix" 2>&1
+              --label "auto-fix" 2>&1  || echo "PR created, label may have failed (non-fatal)"
           else
             echo "PR #$EXISTING already exists for branch $BRANCH, skipping."
           fi
