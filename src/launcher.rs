@@ -211,6 +211,8 @@ fn spawn_monitor() -> io::Result<Child> {
 /// - **直接进程**（qwen.exe）：`child.wait()` 阻塞直到退出，`monitored_pids` 同 PID → 循环立即退出
 /// - **批处理封装**（qwen.cmd → node.exe）：`child.wait()` 先退出（cmd 包装器），
 ///   然后轮询监控列表中的 node PID 直到全部消亡，控制台保持打开
+///
+/// 等待期间实时显示 CPU 核占用和内存使用仪表盘。
 fn wait_for_qwen(mut child: Child, monitored_pids: &[u32]) -> i32 {
     // 先收养直接子进程（避免僵尸进程），不关心其退出码
     let _ = child.wait();
@@ -223,7 +225,13 @@ fn wait_for_qwen(mut child: Child, monitored_pids: &[u32]) -> i32 {
     // 轮询所有监控 PID，直到全部消亡
     info!("等待 {} 个 Qwen 进程退出...", monitored_pids.len());
     let deadline = Instant::now() + Duration::from_secs(86400); // 24 小时兜底
+    // 系统内存快照（只取一次，用于显示总量）
+    let mut sysinfo_snapshot = sysinfo::System::new_all();
+    sysinfo_snapshot.refresh_memory();
+    let total_mem_gb = sysinfo_snapshot.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
     loop {
+        thread::sleep(Duration::from_secs(2));
+
         let mut sys = sysinfo::System::new_all();
         sys.refresh_all();
 
@@ -232,6 +240,7 @@ fn wait_for_qwen(mut child: Child, monitored_pids: &[u32]) -> i32 {
             .any(|pid| sys.process(sysinfo::Pid::from_u32(*pid)).is_some());
 
         if !still_alive {
+            println!();
             return 0;
         }
 
@@ -240,8 +249,89 @@ fn wait_for_qwen(mut child: Child, monitored_pids: &[u32]) -> i32 {
             return 1;
         }
 
-        thread::sleep(Duration::from_secs(2));
+        // 读取共享状态，更新仪表盘
+        display_dashboard(monitored_pids, total_mem_gb);
     }
+}
+
+/// 显示实时资源仪表盘：CPU 核占用 + 内存使用
+fn display_dashboard(monitored_pids: &[u32], total_mem_gb: f64) {
+    // 使用回车回到行首，更新仪表盘区域
+    // 先读取共享状态
+    let state = crate::state::read_state_file().ok();
+
+    // 上移光标到仪表盘起始位置（除了 info! 的"等待 X 个 Qwen 进程退出..."行）
+    // 简单做法：每次输出一个完整的信息块
+    let mut output = String::new();
+
+    // 清屏方式：输出多个空行覆盖之前的内容（兼容 Windows cmd 无 ANSI）
+    // 使用 ANSI 清屏序列（cmd 支持 ANSI escape codes）
+    output.push_str("\x1b[2J\x1b[H"); // 清屏 + 光标归位
+
+    output.push_str("+------------------------------------------------------------+\n");
+    output.push_str("|  Qwen Code 资源监控仪表盘                                   |\n");
+    output.push_str("+------------------------------------------------------------+\n");
+    output.push_str(&format!("|  系统物理内存: {:.1} GB", total_mem_gb));
+
+    // 显示已用内存
+    let mut sys = sysinfo::System::new_all();
+    sys.refresh_memory();
+    let used_mem_gb = sys.used_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+    output.push_str(&format!("  |  已用: {:.1} GB", used_mem_gb));
+
+    // CPU 核心数
+    let phys_cores = process::get_physical_core_count();
+    output.push_str(&format!("  |  物理核心: {}\n", phys_cores));
+    output.push_str("+------------------------------------------------------------+\n");
+
+    // 表头
+    output.push_str(&format!(
+        "  {:<8}  {:<8}  {:<10}  {:<14}  {:<8}\n",
+        "PID", "CPU 核", "内存(MB)", "最大内存(MB)", "状态"
+    ));
+    output.push_str("  ------  ------  ---------  --------------  --------\n");
+
+    if let Some(ref state_file) = state {
+        for pid in monitored_pids {
+            let pkey = pid.to_string();
+            if let Some(inst) = state_file.instances.get(&pkey) {
+                let cores = inst
+                    .bound_cores
+                    .iter()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                output.push_str(&format!(
+                    "  {:<8}  {:<8}  {:<10}  {:<14}  {:<8}\n",
+                    pid,
+                    cores,
+                    inst.working_set_mb,
+                    inst.max_allowed_memory_mb,
+                    inst.state
+                ));
+            } else {
+                // 实例已注销但进程仍在监控列表中
+                output.push_str(&format!(
+                    "  {:<8}  {:<8}  {:<10}  {:<14}  {:<8}\n",
+                    pid, "-", "-", "-", "注销中"
+                ));
+            }
+        }
+    } else {
+        for pid in monitored_pids {
+            output.push_str(&format!(
+                "  {:<8}  {:<8}  {:<10}  {:<14}  {:<8}\n",
+                pid, "-", "-", "-", "等待注册"
+            ));
+        }
+    }
+    output.push_str("+------------------------------------------------------------+\n");
+    output.push_str("|  按 Ctrl+C 终止 Qwen 并自动清理资源                          |\n");
+    output.push_str("+------------------------------------------------------------+\n");
+
+    print!("{}", output);
+    use std::io::Write;
+    std::io::stdout().flush().ok();
 }
 
 /// 清理：停止监控子进程 + 从共享状态注销实例

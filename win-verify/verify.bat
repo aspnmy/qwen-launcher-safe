@@ -18,27 +18,27 @@ echo --------------------------------------------------
 "%EXE%" --help
 echo.
 
-echo [2/6] 测试 init 别名是否存在（应显示 init-config 信息）
+echo [2/6] 测试 init 别名
 echo --------------------------------------------------
 "%EXE%" init --help
 echo.
 
-echo [3/6] 测试 init-config 子命令帮助
+echo [3/6] 测试 init-config --help 选项
 echo --------------------------------------------------
 "%EXE%" init-config --help
 echo.
 
-echo [4/6] 测试 init-config --show（无配置时显示未设置）
+echo [4/6] 测试 init-config --show（显示当前配置）
 echo --------------------------------------------------
 "%EXE%" init-config --show
 echo.
 
-echo [5/6] 测试 init-config --qwen-path auto（配置自动搜索）
+echo [5/6] 测试 init-config --qwen-path 设置路径
 echo --------------------------------------------------
-"%EXE%" init-config --qwen-path auto
+"%EXE%" init-config --qwen-path "C:\Users\nasAdmin\.cherrystudio\bin\qwen.exe"
 echo.
 
-echo [6/6] 再次测试 init-config --show（应显示已配置）
+echo [6/6] 再次测试 init-config --show（显示已配置）
 echo --------------------------------------------------
 "%EXE%" init-config --show
 echo.
