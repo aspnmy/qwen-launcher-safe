@@ -39,35 +39,36 @@ const SEARCH_CANDIDATES: &[&str] = &[
 /// 查找 qwen 命令
 ///
 /// 搜索优先级：
-/// 1. `PATH` 环境变量（`qwen.cmd` / `qwen.exe` / `qwen`）
+/// 1. 配置文件 `<exe 同级>/config/config.json` 中的 `qwenPath`（用户显式配置优先）
 /// 2. 常见全局安装位置（npm / localappdata 等）
-/// 3. 当前目录向上遍历 `node_modules/.bin/`
-/// 4. 配置文件 `<exe 同级>/config/config.json` 中的 `qwenPath`
+/// 3. `PATH` 环境变量（过滤临时包装器）
+/// 4. 当前目录向上遍历 `node_modules/.bin/`
 ///
 /// 全部失败时返回 [`io::ErrorKind::NotFound`]。
 pub fn find_qwen_command() -> io::Result<PathBuf> {
-    // ── 链路 A：自动搜索 ──
-    let auto = auto_search();
-    if let Some(path) = auto {
-        log::info!("自动搜索到 qwen: {:?}", path);
-        return Ok(path);
-    }
-
-    // ── 链路 B：读取配置文件 ──
     let cfg = config::read_config();
+
+    // ── 链路 A：配置文件优先（用户显式配置） ──
     if let Some(ref path_str) = cfg.qwen_path {
         let path = PathBuf::from(path_str);
         if path.exists() {
             log::info!("配置文件指定 qwen: {:?}", path);
             return Ok(path);
         }
-        log::warn!("配置文件指定路径 {:?} 不存在，将在创建后写入", path);
+        log::warn!("配置文件 qwenPath {:?} 不存在，回退到自动搜索", path);
+    }
+
+    // ── 链路 B：自动搜索（通用降级） ──
+    let auto = auto_search();
+    if let Some(path) = auto {
+        log::info!("自动搜索到 qwen: {:?}", path);
+        return Ok(path);
     }
 
     // ── 全部失败 ──
     Err(io::Error::new(
         io::ErrorKind::NotFound,
-        "找不到 qwen 命令：自动搜索无结果，且 .config 文件未配置或路径无效。\n  \
+        "找不到 qwen 命令：配置文件未指定且自动搜索无结果。\n  \
          请先运行 `qwen-launcher-safe init-config --qwen-path <路径>`",
     ))
 }
@@ -82,20 +83,9 @@ fn is_transient_wrapper(path: &std::path::Path) -> bool {
         || s.contains("_nvm\\")
 }
 
-/// 自动搜索 qwen（稳定目录优先，排除临时包装器）
+/// 自动搜索 qwen（通用方法：PATH → node_modules/.bin）
 fn auto_search() -> Option<PathBuf> {
-    // 1. 常见全局安装位置（稳定，优先使用）
-    let common_dirs = common_search_dirs();
-    for dir in &common_dirs {
-        for name in SEARCH_CANDIDATES {
-            let candidate = dir.join(name);
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
-    }
-
-    // 2. PATH 搜索（过滤掉 fnm/volta/nvm 等临时包装器路径）
+    // 1. PATH 搜索（过滤掉 fnm/volta/nvm 等临时包装器路径）
     for name in SEARCH_CANDIDATES {
         if let Ok(path) = which(name) {
             if !is_transient_wrapper(&path) {
@@ -104,7 +94,7 @@ fn auto_search() -> Option<PathBuf> {
         }
     }
 
-    // 3. 从当前目录向上找 node_modules/.bin/
+    // 2. 从当前目录向上找 node_modules/.bin/
     if let Ok(cwd) = std::env::current_dir() {
         let mut dir = Some(cwd.as_path());
         while let Some(d) = dir {
@@ -120,33 +110,6 @@ fn auto_search() -> Option<PathBuf> {
     }
 
     None
-}
-
-/// 返回常见全局安装目录列表
-fn common_search_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-
-    // %APPDATA%\npm （npm 全局 bin）
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        dirs.push(PathBuf::from(appdata).join("npm"));
-    }
-    // %LOCALAPPDATA%\qwen
-    if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
-        dirs.push(PathBuf::from(localappdata).join("qwen").join("bin"));
-    }
-    // ~\.cherrystudio\bin （原版 fallback）
-    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-        dirs.push(PathBuf::from(home).join(".cherrystudio").join("bin"));
-    }
-    // %ProgramFiles%\qwen
-    if let Ok(pf) = std::env::var("ProgramFiles") {
-        dirs.push(PathBuf::from(pf).join("qwen").join("bin"));
-    }
-    if let Ok(pfx86) = std::env::var("ProgramFiles(x86)") {
-        dirs.push(PathBuf::from(pfx86).join("qwen").join("bin"));
-    }
-
-    dirs
 }
 
 /// 在 `PATH` 中查找可执行文件（简化版 which）

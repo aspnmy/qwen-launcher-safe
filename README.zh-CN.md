@@ -97,14 +97,12 @@ src/
 ## qwen 搜索顺序
 
 ```
-① %APPDATA%\npm\           (npm 全局 bin — 稳定，无包装器)
-② %LOCALAPPDATA%\qwen\bin\ (本地应用数据)
-③ ~\.cherrystudio\bin\     (原版 PowerShell 脚本备选路径)
-④ %ProgramFiles%\qwen\bin\ (Program Files)
-⑤ {cwd}/node_modules/.bin/… (向上遍历父目录)
-⑥ PATH 环境变量             (过滤 fnm/volta/nvm 临时包装器)
-⑦ config/config.json        (配置文件中的 qwenPath 字段)
+① config/config.json        配置文件 qwenPath（用户显式配置优先）
+② PATH 环境变量              （过滤 fnm/volta/nvm 临时包装器）
+③ {cwd}/node_modules/.bin/…  （向上遍历父目录）
 ```
+
+不包含任何硬编码安装路径——PATH 是跨所有平台和安装方式的通用发现机制。
 
 ## 配置文件
 

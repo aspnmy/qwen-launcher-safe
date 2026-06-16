@@ -97,14 +97,12 @@ src/
 ## Search Order for `qwen`
 
 ```
-① %APPDATA%\npm\              (npm global bin — stable, no wrappers)
-② %LOCALAPPDATA%\qwen\bin\     (local app data)
-③ ~\.cherrystudio\bin\         (original fallback from PowerShell script)
-④ %ProgramFiles%\qwen\bin\     (Program Files)
-⑤ {cwd}/node_modules/.bin/...  (walk up parent directories)
-⑥ PATH environment variable    (fnm/volta/nvm transient wrappers filtered out)
-⑦ config/config.json           (manual config file, qwenPath field)
+① config/config.json           (manual config file, qwenPath — user config is authoritative)
+② PATH environment variable    (fnm/volta/nvm transient wrappers filtered out)
+③ {cwd}/node_modules/.bin/...  (walk up parent directories)
 ```
+
+No hardcoded install paths — PATH is the universal discovery mechanism across all platforms and installations.
 
 ## Config File
 

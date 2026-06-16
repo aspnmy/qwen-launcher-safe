@@ -39,16 +39,11 @@ src/
 ```
 find_qwen_command()
 │
-├─ ① %APPDATA%\npm\          稳定安装目录（npm 全局 bin）
-├─ ② %LOCALAPPDATA%\qwen\bin\...
-├─ ③ ~\.cherrystudio\bin\    原版硬编码备选
-├─ ④ %ProgramFiles%\qwen\bin\
-├─ ⑤ node_modules/.bin/…    从当前目录向上遍历
-├─ ⑥ PATH 环境变量           过滤 fnm/volta/nvm 临时包装器
-├─ ⑦ config/config.json      qwenPath 字段
+├─ ① config/config.json      qwenPath 字段（用户显式配置优先）
+├─ ② PATH 环境变量           过滤 fnm/volta/nvm 临时包装器
+├─ ③ node_modules/.bin/…    从当前目录向上遍历
 │
 └─ 全部失败 → io::Error::NotFound
-```
 
 ## 状态文件格式
 
