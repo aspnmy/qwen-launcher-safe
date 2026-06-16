@@ -1,5 +1,7 @@
 # qwen-launcher-safe
 
+> **简体中文版请参阅：[README.zh-CN.md](./README.zh-CN.md)**
+
 A Rust rewrite of the [qwen-launcher.ps1](https://github.com/aspnmy/qwen-coder) — a resource-protected wrapper for launching Qwen Code CLI.
 
 ## Features
