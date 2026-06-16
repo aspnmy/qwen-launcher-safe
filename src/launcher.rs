@@ -144,7 +144,10 @@ pub fn run(args: &[String]) -> ExitCode {
             SHOULD_EXIT.store(true, Ordering::SeqCst);
         }
         unsafe {
-            libc::signal(libc::SIGTERM, sigterm_handler as libc::sighandler_t);
+            libc::signal(
+                libc::SIGTERM,
+                sigterm_handler as *const () as libc::sighandler_t,
+            );
         }
     }
 
