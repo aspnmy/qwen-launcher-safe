@@ -14,6 +14,10 @@
 - **共享状态文件** — 实例注册表持久化在 `%TEMP%\qwen-resource-state.json`，与现有 PowerShell `qwen-resource-monitor` 技能兼容
 - **后台监控** — 自生成子进程 (`qwen-launcher-safe monitor`) 定时检查注册实例内存使用，清理已消失的 PID
 - **优雅清理** — Qwen 退出时自动停止监控、注销所有已注册实例
+- **工作目录配置** — 配置文件中的 `workingDir` 字段设置 Qwen 子进程工作目录，使 project 级 `.qwen/skills/` 技能可自动加载
+- **实时仪表盘** — 启动时显示 PID、CPU 核、内存使用 (MB) 和状态，每 2 秒刷新
+- **输入归一化** — 用户输入自动全角→半角转换、去除引号，避免路径校验失败
+- **容错状态文件 I/O** — 写入使用临时文件+重命名实现原子操作；读取使用深度计数器容错，自动修复尾部垃圾字符
 
 ## 首次使用
 
@@ -113,9 +117,12 @@ qwen 路径**仅**来自配置文件，无自动搜索、无硬编码路径。
 {
   "qwenPath": "C:\\Users\\nasAdmin\\.cherrystudio\\bin\\qwen.exe",
   "maxMemoryMB": 1024,
-  "monitorIntervalSec": 10
+  "monitorIntervalSec": 10,
+  "workingDir": "C:\\$aspnmyTools\\qwen coder"
 }
 ```
+
+- `workingDir`（可选）：Qwen 子进程工作目录。设置后，Qwen 会加载该目录下的 `.qwen/skills/` 中的 project 级技能。
 
 ## 状态文件
 

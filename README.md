@@ -22,6 +22,10 @@ qwen-launcher-safe init
 - **Shared State File** — Instance registry persists at `%TEMP%\qwen-resource-state.json`, compatible with the existing PowerShell `qwen-resource-monitor` skill.
 - **Background Monitor** — A self-spawned child process (`qwen-launcher-safe monitor`) periodically checks registered instances' memory usage and cleans up vanished PIDs.
 - **Graceful Cleanup** — On Qwen exit, the monitor is killed and all registered instances are unregistered from the shared state file.
+- **Working Directory Config** — `workingDir` in config sets the Qwen child process working directory, enabling project-level `.qwen/skills/` auto-loading.
+- **Real-time Dashboard** — During launch, a console dashboard shows PID, CPU core, memory usage (MB), and status per instance, refreshed every 2 seconds.
+- **Input Normalization** — User input is automatically normalized: fullwidth characters → halfwidth, and surrounding quotes stripped, preventing path validation errors.
+- **Tolerant State File I/O** — State file writes use atomic write (temp file + rename) to prevent corruption; reads use depth-counter-based tolerance to recover from trailing garbage.
 
 ## Installation
 
@@ -114,9 +118,12 @@ qwen 路径**仅**来自配置文件，无自动搜索、无硬编码路径。
 {
   "qwenPath": "C:\\Users\\nasAdmin\\.cherrystudio\\bin\\qwen.exe",
   "maxMemoryMB": 1024,
-  "monitorIntervalSec": 10
+  "monitorIntervalSec": 10,
+  "workingDir": "C:\\$aspnmyTools\\qwen coder"
 }
 ```
+
+- `workingDir` (optional): Qwen child process working directory. If set, Qwen loads project-level skills from `./.qwen/skills/` under this directory.
 
 ## State File
 
