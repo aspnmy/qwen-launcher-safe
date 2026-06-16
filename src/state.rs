@@ -94,12 +94,29 @@ impl Default for StateFile {
     }
 }
 
-/// 返回共享状态文件路径：`%TEMP%\qwen-resource-state.json`
+/// 返回共享状态文件路径
+///
+/// - Windows: `%TEMP%\qwen-resource-state.json`
+/// - Unix/Linux: `/tmp/qwen-resource-state.json`
 pub fn state_file_path() -> PathBuf {
-    let tmp = std::env::var("TEMP")
-        .or_else(|_| std::env::var("TMP"))
-        .unwrap_or_else(|_| r"C:\Windows\Temp".into());
-    PathBuf::from(tmp).join("qwen-resource-state.json")
+    #[cfg(windows)]
+    {
+        let tmp = std::env::var("TEMP")
+            .or_else(|_| std::env::var("TMP"))
+            .unwrap_or_else(|_| r"C:\Windows\Temp".into());
+        PathBuf::from(tmp).join("qwen-resource-state.json")
+    }
+    #[cfg(unix)]
+    {
+        let tmp = std::env::var("XDG_RUNTIME_DIR")
+            .or_else(|_| std::env::var("TMPDIR"))
+            .unwrap_or_else(|_| "/tmp".into());
+        PathBuf::from(tmp).join("qwen-resource-state.json")
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        PathBuf::from("/tmp").join("qwen-resource-state.json")
+    }
 }
 
 /// 读取状态文件，文件不存在时返回 [`StateFile::default`]
@@ -198,33 +215,105 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn test_tolerant_read_of_corrupted_state() {
-        // 使用真实的（可能已损坏的）状态文件测试容错读取
-        let result = read_state_file();
-        match &result {
-            Ok(state) => {
-                println!(
-                    "容错读取成功: {} 个实例, globalState={:?}",
-                    state.instances.len(),
-                    state.global_state
-                );
-            }
-            Err(e) => {
-                panic!("容错读取失败: {}", e);
-            }
-        }
+    fn test_find_root_close_normal() {
+        let data = r#"{"instances":{},"globalState":{"totalInstances":0,"physicalCores":0}}"#;
+        let pos = find_root_close(data);
+        assert!(pos.is_some(), "应找到根闭括号");
+        assert_eq!(&data[..=pos.unwrap()], data, "应匹配整个 JSON");
+    }
 
-        // 验证文件现在可以被正常解析（已被修复）
-        let path = state_file_path();
-        if path.exists() {
-            let data = fs::read_to_string(&path).expect("read state file after fix");
-            let parsed: Result<StateFile, _> = serde_json::from_str(&data);
-            assert!(
-                parsed.is_ok(),
-                "修复后的文件应该能被正常解析: {:?}",
-                parsed.err()
-            );
-            println!("修复后的文件可被正常解析");
-        }
+    #[test]
+    fn test_find_root_close_with_trailing_junk() {
+        let data = r#"{"instances":{},"globalState":{"totalInstances":0,"physicalCores":0}}}"#;
+        let pos = find_root_close(data);
+        assert!(pos.is_some(), "应找到第一个根闭括号");
+        let trimmed = &data[..=pos.unwrap()];
+        let parsed: serde_json::Value = serde_json::from_str(trimmed).expect("截断后应可解析");
+        assert_eq!(parsed["globalState"]["totalInstances"], 0);
+    }
+
+    #[test]
+    fn test_find_root_close_skips_string_braces() {
+        // 字符串中包含 { 和 }，不应干扰深度计数
+        let data = r#"{"key":"a{b}c"}"#;
+        let pos = find_root_close(data);
+        assert!(pos.is_some(), "应正确跳过字符串中的括号");
+        assert_eq!(&data[..=pos.unwrap()], data);
+    }
+
+    #[test]
+    fn test_tolerant_read_of_corrupted_state() {
+        // 构造一个尾部有垃圾字符的损坏 JSON
+        let corrupted = r#"{
+  "instances": {
+    "1234": {
+      "pid": 1234,
+      "startTime": "2026-06-17T00:00:00+00:00",
+      "workingSetMB": 256,
+      "boundCores": [0],
+      "maxAllowedMemoryMB": 1024,
+      "state": "running",
+      "priority": 1,
+      "lastHeartbeat": "2026-06-17T00:00:00+00:00"
+    }
+  },
+  "globalState": {
+    "totalInstances": 1,
+    "physicalCores": 8
+  }
+}}}"#;
+
+        // 备份原始状态文件
+        let orig_path = state_file_path();
+        let orig_backup = if orig_path.exists() {
+            fs::read_to_string(&orig_path).ok()
+        } else {
+            None
+        };
+
+        // 写入损坏内容到真实路径
+        fs::write(&orig_path, corrupted).expect("写入损坏测试数据");
+
+        // 测试容错读取
+        let result = read_state_file();
+        assert!(result.is_ok(), "容错读取应成功: {:?}", result.err());
+        let state = result.unwrap();
+        assert_eq!(state.instances.len(), 1);
+        assert_eq!(state.global_state.total_instances, 1);
+        assert_eq!(state.global_state.physical_cores, 8);
+
+        // 验证文件现在已被修复（干净 JSON）
+        let fixed_data = fs::read_to_string(&orig_path).expect("读取修复后文件");
+        let parsed: Result<StateFile, _> = serde_json::from_str(&fixed_data);
+        assert!(parsed.is_ok(), "修复后的文件应可正常解析: {:?}", parsed.err());
+
+        // 恢复原始状态文件
+        match orig_backup {
+            Some(content) => fs::write(&orig_path, content).ok(),
+            None => fs::remove_file(&orig_path).ok(),
+        };
+    }
+
+    #[test]
+    fn test_new_instance_creates_valid_record() {
+        let inst = new_instance(42, 1, 2, 2048);
+        assert_eq!(inst.pid, 42);
+        assert_eq!(inst.bound_cores, vec![1]);
+        assert_eq!(inst.max_allowed_memory_mb, 2048);
+        assert_eq!(inst.state, "running");
+        assert_eq!(inst.priority, 2);
+        assert_eq!(inst.working_set_mb, 0);
+        assert!(!inst.start_time.is_empty());
+        assert_eq!(inst.last_heartbeat, inst.start_time);
+    }
+
+    #[test]
+    fn test_read_state_file_always_returns_valid() {
+        // 无论状态文件是否存在，read_state_file() 都应返回可用的 StateFile
+        let result = read_state_file();
+        assert!(result.is_ok(), "应返回有效的 StateFile: {:?}", result.err());
+        let state = result.unwrap();
+        // globalState 应始终有合理的值（总实例数可能为 0 或正数）
+        assert!(state.global_state.physical_cores < 1024, "CPU 核心数应合理");
     }
 }

@@ -18,6 +18,20 @@
 - **实时仪表盘** — 启动时显示 PID、CPU 核、内存使用 (MB) 和状态，每 2 秒刷新
 - **输入归一化** — 用户输入自动全角→半角转换、去除引号，避免路径校验失败
 - **容错状态文件 I/O** — 写入使用临时文件+重命名实现原子操作；读取使用深度计数器容错，自动修复尾部垃圾字符
+- **信号处理** — Ctrl+C 时通过原子标志驱动的信号处理器优雅清理资源（停止监控、注销实例）
+- **负载均衡核心分配** — 所有 CPU 核占满时，新实例分配到负载最低的核心，而非全部堆积到 core 0
+- **配置容错** — 损坏的 `config.json` 输出警告日志后返回默认值，不会 panic 或静默返回零值
+- **Linux 兼容** — 状态文件路径支持 Unix 平台（`/tmp/qwen-resource-state.json`），带 `XDG_RUNTIME_DIR` / `TMPDIR` 回退
+
+## CI 流水线
+
+每次推送和 PR 通过 `.github/workflows/ci.yml` 触发 CI 检查：
+
+| 平台 | 检查项 |
+|------|--------|
+| ubuntu-latest | `cargo check` + `clippy -D warnings` + `cargo fmt --check` + `cargo test` |
+| windows-latest | `cargo check` + `clippy -D warnings` + `cargo test` |
+| macos-latest | `cargo check` |
 
 ## 首次使用
 
@@ -91,12 +105,12 @@ qwen-launcher-safe monitor -i 10
 
 ```
 src/
-├── main.rs       — CLI 入口（clap derive，3 个子命令）
-├── config.rs     — ~/.qwen-launcher/config.json 读写
-├── launcher.rs   — 启动编排（基线→启动→注册→等待→清理）
+├── main.rs       — CLI 入口（clap derive，3 个子命令 + 交互式配置向导）
+├── config.rs     — config/config.json 读写（含容错处理）
+├── launcher.rs   — 启动编排（基线→启动→注册→信号→等待→清理）
 ├── monitor.rs    — 后台资源监控循环
-├── process.rs    — Windows 进程工具（搜索、CPU 亲和性、命令行匹配）
-└── state.rs      — 共享状态文件（序列化类型和 I/O）
+├── process.rs    — 进程工具（发现、CPU 亲和性、Qwen 进程正则匹配）
+└── state.rs      — 共享状态文件（%TEMP%/tmp qwen-resource-state.json）类型和 I/O
 ```
 
 ## qwen 路径来源

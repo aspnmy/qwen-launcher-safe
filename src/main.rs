@@ -48,8 +48,9 @@ fn normalize_input(s: &str) -> String {
             '\u{FF01}'..='\u{FF5E}' => {
                 out.push(char::from_u32(c as u32 - 0xFEE0).unwrap_or(c));
             }
-            // 全角引号（左/右）
-            '\u{201C}' | '\u{201D}' | '\u{300C}' | '\u{300D}' => out.push('"'),
+            // 全角引号（双引号 + 单引号）
+            '\u{2018}' | '\u{2019}' | '\u{201C}' | '\u{201D}'
+            | '\u{300C}' | '\u{300D}' => out.push('"'),
             // 全角空格
             '\u{3000}' => out.push(' '),
             // 保留原字符
@@ -102,8 +103,6 @@ enum Cli {
 /// 引导用户配置 qwen 路径、内存限制和监控间隔。
 /// 不进行任何自动搜索——完全由用户输入决定。
 fn interactive_setup() -> ExitCode {
-    use std::io::{stdin, stdout, Write};
-
     println!("+----------------------------------------------+");
     println!("|  qwenPath 未配置，进入交互式配置向导          |");
     println!("|  （直接回车使用默认值，留空则跳过）           |");
@@ -112,12 +111,9 @@ fn interactive_setup() -> ExitCode {
 
     // ── 步骤 1：Qwen 路径 ──
     println!("[步骤 1/4] Qwen 可执行文件路径");
-    print!("  请输入 qwen.exe 或 qwen.cmd 的完整路径: ");
-    stdout().flush().ok();
-    let mut line = String::new();
-    stdin().read_line(&mut line).ok();
-    let line = normalize_input(&line).trim().trim_matches('"').trim().to_string();
+    let line = read_line_normalized();
     let qwen_path = if line.is_empty() {
+        println!("  [跳过] qwenPath 未设置，将使用系统 PATH 查找");
         None
     } else {
         let path = std::path::Path::new(&line);
@@ -132,39 +128,39 @@ fn interactive_setup() -> ExitCode {
     // ── 步骤 2：内存限制 ──
     println!();
     println!("[步骤 2/4] 最大内存限制 (MB) [默认 1024]");
-    print!("  请输入: ");
-    stdout().flush().ok();
-    let mut line = String::new();
-    stdin().read_line(&mut line).ok();
-    let line = line.trim();
+    let line = read_line_raw();
     let max_memory_mb = if line.is_empty() {
         1024
     } else {
-        line.parse::<u64>().unwrap_or(1024)
+        match line.parse::<u64>() {
+            Ok(v) => v,
+            Err(_) => {
+                eprintln!("  [提示] 输入无效，使用默认值 1024 MB");
+                1024
+            }
+        }
     };
 
     // ── 步骤 3：监控间隔 ──
     println!();
     println!("[步骤 3/4] 监控轮询间隔 (秒) [默认 10]");
-    print!("  请输入: ");
-    stdout().flush().ok();
-    let mut line = String::new();
-    stdin().read_line(&mut line).ok();
-    let line = line.trim();
+    let line = read_line_raw();
     let monitor_interval = if line.is_empty() {
         10
     } else {
-        line.parse::<u64>().unwrap_or(10)
+        match line.parse::<u64>() {
+            Ok(v) => v,
+            Err(_) => {
+                eprintln!("  [提示] 输入无效，使用默认值 10 秒");
+                10
+            }
+        }
     };
 
     // ── 步骤 4：工作目录（可选） ──
     println!();
     println!("[步骤 4/4] Qwen 工作目录（使子进程加载该目录下的 .qwen/skills/ 技能）");
-    print!("  请输入（或留空使用默认）: ");
-    stdout().flush().ok();
-    let mut line = String::new();
-    stdin().read_line(&mut line).ok();
-    let line = normalize_input(&line).trim().trim_matches('"').trim().to_string();
+    let line = read_line_normalized();
     let working_dir = if line.is_empty() {
         None
     } else {
@@ -195,7 +191,10 @@ fn interactive_setup() -> ExitCode {
     match config::write_config(&cfg) {
         Ok(()) => {
             println!("[OK] 配置已完成，已写入: {:?}", config::config_file_path());
-            println!("{}", serde_json::to_string_pretty(&cfg).unwrap());
+            match serde_json::to_string_pretty(&cfg) {
+                Ok(json) => println!("{}", json),
+                Err(e) => eprintln!("[WARN] 序列化配置失败: {}", e),
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -203,6 +202,22 @@ fn interactive_setup() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// 读取一行原始输入（无归一化处理，仅 trim）
+fn read_line_raw() -> String {
+    use std::io::{stdin, stdout, Write};
+    print!("  请输入: ");
+    stdout().flush().ok();
+    let mut line = String::new();
+    stdin().read_line(&mut line).ok();
+    line.trim().to_string()
+}
+
+/// 读取一行输入并做全角→半角归一化、去除引号和空白
+fn read_line_normalized() -> String {
+    let raw = read_line_raw();
+    normalize_input(&raw).trim_matches('"').trim().to_string()
 }
 
 /// 程序入口
@@ -258,7 +273,10 @@ fn cmd_init_config(
 ) -> ExitCode {
     if show {
         let cfg = config::read_config();
-        println!("{}", serde_json::to_string_pretty(&cfg).unwrap());
+        match serde_json::to_string_pretty(&cfg) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("[WARN] 序列化配置失败: {}", e),
+        }
         return ExitCode::SUCCESS;
     }
 
@@ -309,7 +327,10 @@ fn cmd_init_config(
     match config::write_config(&cfg) {
         Ok(()) => {
             println!("配置已写入: {:?}", config::config_file_path());
-            println!("{}", serde_json::to_string_pretty(&cfg).unwrap());
+            match serde_json::to_string_pretty(&cfg) {
+                Ok(json) => println!("{}", json),
+                Err(e) => eprintln!("[WARN] 序列化配置失败: {}", e),
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {

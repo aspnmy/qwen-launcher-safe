@@ -27,18 +27,18 @@ const DEFAULT_INTERVAL_SECS: u64 = 10;
 /// - 未指定间隔时使用默认值 10 秒
 /// - 可通过 `init-config --monitor-interval` 持久化配置
 pub fn run(interval_secs: Option<u64>) -> ExitCode {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_secs()
-        .init();
+        .try_init();
 
     let interval = interval_secs.unwrap_or(DEFAULT_INTERVAL_SECS);
     info!("后台资源监控启动，轮询间隔 {}s", interval);
 
     loop {
-        thread::sleep(Duration::from_secs(interval));
         if let Err(e) = check_instances() {
             error!("监控检查失败: {}", e);
         }
+        thread::sleep(Duration::from_secs(interval));
     }
 }
 
@@ -102,4 +102,21 @@ fn check_instances() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_interval_constant() {
+        assert_eq!(DEFAULT_INTERVAL_SECS, 10);
+    }
+
+    #[test]
+    fn test_check_instances_empty_state() {
+        // 状态文件不存在或为空时，check_instances 应静默返回 Ok
+        let result = check_instances();
+        assert!(result.is_ok(), "空状态时应返回 Ok: {:?}", result.err());
+    }
 }

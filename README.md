@@ -26,6 +26,20 @@ qwen-launcher-safe init
 - **Real-time Dashboard** — During launch, a console dashboard shows PID, CPU core, memory usage (MB), and status per instance, refreshed every 2 seconds.
 - **Input Normalization** — User input is automatically normalized: fullwidth characters → halfwidth, and surrounding quotes stripped, preventing path validation errors.
 - **Tolerant State File I/O** — State file writes use atomic write (temp file + rename) to prevent corruption; reads use depth-counter-based tolerance to recover from trailing garbage.
+- **Signal Handling** — On Ctrl+C, resources are cleaned up gracefully (monitor stopped, instances unregistered) via an atomic flag-driven signal handler.
+- **Load-balanced Core Allocation** — When all CPU cores are occupied, new instances are distributed to the least-loaded core rather than all falling back to core 0.
+- **Config Fault Tolerance** — Corrupted `config.json` produces a warning log and falls back to defaults instead of panicking or silently returning zero values.
+- **Linux Compatibility** — State file path supports Unix (`/tmp/qwen-resource-state.json`) with `XDG_RUNTIME_DIR` / `TMPDIR` fallback.
+
+## CI Pipeline
+
+Every push and PR triggers a CI check via `.github/workflows/ci.yml`:
+
+| Platform | Steps |
+|----------|-------|
+| ubuntu-latest | `cargo check` + `clippy -D warnings` + `cargo fmt --check` + `cargo test` |
+| windows-latest | `cargo check` + `clippy -D warnings` + `cargo test` |
+| macos-latest | `cargo check` |
 
 ## Installation
 
@@ -92,12 +106,12 @@ qwen-launcher-safe monitor -i 10
 
 ```
 src/
-├── main.rs       — CLI entry (clap derive, 3 subcommands)
-├── config.rs     — ~/.qwen-launcher/config.json reader/writer
-├── launcher.rs   — Launch orchestration (baseline → spawn → register → wait → cleanup)
+├── main.rs       — CLI entry (clap derive, 3 subcommands + interactive setup wizard)
+├── config.rs     — config/config.json reader/writer with fault tolerance
+├── launcher.rs   — Launch orchestration (baseline → spawn → register → signal → wait → cleanup)
 ├── monitor.rs    — Background resource monitor loop
-├── process.rs    — Windows process utilities (search, affinity, WMI cmdline match)
-└── state.rs      — Shared state file (%TEMP%\qwen-resource-state.json) types and I/O
+├── process.rs    — Process utilities (discovery, CPU affinity, Qwen process regex matching)
+└── state.rs      — Shared state file (%TEMP%/tmp qwen-resource-state.json) types and I/O
 ```
 
 ## qwen 路径来源

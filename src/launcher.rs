@@ -10,13 +10,17 @@
 //! 6. **等待退出** — 收养直接子进程后轮询所有监控 PID 直至消亡
 //! 7. **清理** — 停止监控并注销所有已注册实例
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::process::{Child, ExitCode};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use log::{error, info, warn};
+
+/// Ctrl+C 触发时设为 true，主循环检测后触发优雅退出
+static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 
 use crate::config;
 use crate::process;
@@ -27,9 +31,9 @@ use crate::state;
 /// 接收透传给 qwen 命令的参数数组，
 /// 返回进程退出码。
 pub fn run(args: &[String]) -> ExitCode {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_secs()
-        .init();
+        .try_init();
 
     info!("Qwen Code 资源保护启动器 (Rust)");
 
@@ -83,7 +87,7 @@ pub fn run(args: &[String]) -> ExitCode {
     };
 
     // 4. 注册实例 + 绑定 CPU
-    let registered_keys = match register_instances(&new_pids) {
+    let registered_keys = match register_instances(&new_pids, cfg.max_memory_mb) {
         Ok(keys) => {
             info!("已注册 {} 个实例", keys.len());
             keys
@@ -95,12 +99,20 @@ pub fn run(args: &[String]) -> ExitCode {
     };
 
     // 5. 启动后台监控
-    let monitor_child = spawn_monitor();
+    let monitor_child = spawn_monitor(cfg.monitor_interval_sec);
     let has_monitor = monitor_child.is_ok();
     if has_monitor {
         info!("后台监控已启动");
     } else {
         warn!("后台监控启动失败");
+    }
+
+    // 设置 Ctrl+C 信号处理器
+    if let Err(e) = ctrlc::set_handler(move || {
+        info!("收到 Ctrl+C，开始清理资源...");
+        SHOULD_EXIT.store(true, Ordering::SeqCst);
+    }) {
+        warn!("注册 Ctrl+C 处理器失败: {}", e);
     }
 
     // 6. 等待 Qwen 退出
@@ -139,27 +151,37 @@ fn poll_new_qwen_processes(baseline: &HashSet<u32>) -> Vec<u32> {
     }
 }
 
+/// 从核心负载表中选择最优核心
+///
+/// Phase 1: 优先完全空闲的核心（不在 `core_load` 中）
+/// Phase 2: 无空闲核时，选负载最低的核均匀分摊
+fn select_best_core(phys_cores: u32, core_load: &HashMap<u32, u32>) -> u32 {
+    (0..phys_cores)
+        .find(|c| !core_load.contains_key(c))
+        .unwrap_or_else(|| {
+            (0..phys_cores)
+                .min_by_key(|c| core_load.get(c).copied().unwrap_or(0))
+                .unwrap_or(0)
+        })
+}
+
 /// 向共享状态文件注册实例并绑定 CPU 核
 ///
 /// 1. 读取共享状态文件
 /// 2. 收集已占用核心（避免多实例冲突）
 /// 3. 为每个新 PID 分配最小空闲核心
 /// 4. 写入状态文件并调用 Windows API 绑定 CPU 亲和性
-fn register_instances(pids: &[u32]) -> io::Result<Vec<String>> {
+fn register_instances(pids: &[u32], max_memory_mb: u64) -> io::Result<Vec<String>> {
     let mut state = state::read_state_file()?;
-    let phys_cores = process::get_physical_core_count();
+    let phys_cores = process::get_processor_count();
     state.global_state.physical_cores = phys_cores;
 
-    // 从配置文件读取内存限制
-    let cfg = config::read_config();
-    let max_memory = cfg.max_memory_mb;
-
-    // 收集已占用核心
-    let mut used_cores: HashSet<u32> = HashSet::new();
+    // 统计每核心已绑定的实例数（core → count）
+    let mut core_load: HashMap<u32, u32> = HashMap::with_capacity(phys_cores as usize);
     for inst in state.instances.values() {
         if inst.state == "running" {
             for c in &inst.bound_cores {
-                used_cores.insert(*c);
+                *core_load.entry(*c).or_insert(0) += 1;
             }
         }
     }
@@ -171,14 +193,17 @@ fn register_instances(pids: &[u32]) -> io::Result<Vec<String>> {
             continue;
         }
 
-        // 分配最小空闲核心
-        let core = (0..phys_cores)
-            .find(|c| !used_cores.contains(c))
-            .unwrap_or(0);
-        used_cores.insert(core);
+        let was_shared = core_load.len() >= phys_cores as usize;
+        let core = select_best_core(phys_cores, &core_load);
+        *core_load.entry(core).or_insert(0) += 1;
+
+        if was_shared {
+            warn!("核心不足，PID {} 共享核心 {}（共享后负载 {} 实例）",
+                pid, core, core_load[&core]);
+        }
 
         let priority = state.instances.len() as u32 + 1;
-        let inst = state::new_instance(pid, core, priority, max_memory);
+        let inst = state::new_instance(pid, core, priority, max_memory_mb);
         state.instances.insert(pkey.clone(), inst);
         registered.push(pkey.clone());
 
@@ -195,19 +220,17 @@ fn register_instances(pids: &[u32]) -> io::Result<Vec<String>> {
 
 /// 生成后台监控子进程
 ///
-/// 读取配置文件中的监控间隔，以 `monitor --interval <秒>` 参数
-/// 自生成一个子进程运行后台监控循环。
-fn spawn_monitor() -> io::Result<Child> {
+/// 以 `monitor --interval <秒>` 参数自生成一个子进程运行后台监控循环。
+fn spawn_monitor(interval_sec: u64) -> io::Result<Child> {
     let exe = process::self_exe_path()?;
-    let cfg = config::read_config();
-    let interval_sec = format!("{}", cfg.monitor_interval_sec);
+    let interval_str = interval_sec.to_string();
     let child = std::process::Command::new(&exe)
         .arg("monitor")
         .arg("--interval")
-        .arg(&interval_sec)
+        .arg(&interval_str)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
         .spawn()?;
     Ok(child)
 }
@@ -232,15 +255,22 @@ fn wait_for_qwen(mut child: Child, monitored_pids: &[u32]) -> i32 {
     // 轮询所有监控 PID，直到全部消亡
     info!("等待 {} 个 Qwen 进程退出...", monitored_pids.len());
     let deadline = Instant::now() + Duration::from_secs(86400); // 24 小时兜底
-    // 系统内存快照（只取一次，用于显示总量）
-    let mut sysinfo_snapshot = sysinfo::System::new_all();
-    sysinfo_snapshot.refresh_memory();
-    let total_mem_gb = sysinfo_snapshot.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+    let total_mem_gb = {
+        let mut sys = sysinfo::System::new_all();
+        sys.refresh_memory();
+        sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0)
+    };
     loop {
         thread::sleep(Duration::from_secs(2));
 
         let mut sys = sysinfo::System::new_all();
         sys.refresh_all();
+
+        if SHOULD_EXIT.load(Ordering::SeqCst) {
+            info!("检测到 Ctrl+C 信号，退出等待循环");
+            println!();
+            return 2; // 被信号中断
+        }
 
         let still_alive = monitored_pids
             .iter()
@@ -257,38 +287,33 @@ fn wait_for_qwen(mut child: Child, monitored_pids: &[u32]) -> i32 {
         }
 
         // 读取共享状态，更新仪表盘
-        display_dashboard(monitored_pids, total_mem_gb);
+        display_dashboard(monitored_pids, total_mem_gb, &sys);
     }
 }
 
 /// 显示实时资源仪表盘：CPU 核占用 + 内存使用
-fn display_dashboard(monitored_pids: &[u32], total_mem_gb: f64) {
+fn display_dashboard(monitored_pids: &[u32], total_mem_gb: f64, sys: &sysinfo::System) {
     // 使用回车回到行首，更新仪表盘区域
     // 先读取共享状态
     let state = crate::state::read_state_file().ok();
 
-    // 上移光标到仪表盘起始位置（除了 info! 的"等待 X 个 Qwen 进程退出..."行）
-    // 简单做法：每次输出一个完整的信息块
     let mut output = String::new();
 
-    // 清屏方式：输出多个空行覆盖之前的内容（兼容 Windows cmd 无 ANSI）
-    // 使用 ANSI 清屏序列（cmd 支持 ANSI escape codes）
-    output.push_str("\x1b[2J\x1b[H"); // 清屏 + 光标归位
+    // 清屏 + 光标归位
+    output.push_str("\x1b[2J\x1b[H");
 
     output.push_str("+------------------------------------------------------------+\n");
     output.push_str("|  Qwen Code 资源监控仪表盘                                   |\n");
     output.push_str("+------------------------------------------------------------+\n");
     output.push_str(&format!("|  系统物理内存: {:.1} GB", total_mem_gb));
 
-    // 显示已用内存
-    let mut sys = sysinfo::System::new_all();
-    sys.refresh_memory();
+    // 显示已用内存（使用传入的 sys 引用，避免重复创建）
     let used_mem_gb = sys.used_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
     output.push_str(&format!("  |  已用: {:.1} GB", used_mem_gb));
 
     // CPU 核心数
-    let phys_cores = process::get_physical_core_count();
-    output.push_str(&format!("  |  物理核心: {}\n", phys_cores));
+    let phys_cores = process::get_processor_count();
+    output.push_str(&format!("  |  逻辑处理器: {}\n", phys_cores));
     output.push_str("+------------------------------------------------------------+\n");
 
     // 表头
@@ -368,5 +393,78 @@ fn cleanup(monitor_child: io::Result<Child>, registered_keys: &[String]) {
             warn!("写入状态文件失败: {}", e);
         }
         info!("共注销 {} 个实例", registered_keys.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn test_should_exit_default_false() {
+        assert!(!SHOULD_EXIT.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_should_exit_signal_triggers() {
+        SHOULD_EXIT.store(true, Ordering::SeqCst);
+        assert!(SHOULD_EXIT.load(Ordering::SeqCst));
+        SHOULD_EXIT.store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_processor_count_is_reasonable() {
+        let count = process::get_processor_count();
+        assert!(count >= 1, "逻辑处理器数应 >= 1");
+        assert!(count < 1024, "逻辑处理器数应合理");
+    }
+
+    #[test]
+    fn test_select_best_core_empty_load() {
+        let load = HashMap::new();
+        // 无负载时选第一个空闲核 (0)
+        assert_eq!(select_best_core(4, &load), 0);
+    }
+
+    #[test]
+    fn test_select_best_core_first_free() {
+        let mut load = HashMap::new();
+        load.insert(0, 1);
+        load.insert(2, 1);
+        // core 0 和 2 已被占，应选 core 1（第一个空闲）
+        assert_eq!(select_best_core(4, &load), 1);
+    }
+
+    #[test]
+    fn test_select_best_core_all_occupied_equal() {
+        let mut load = HashMap::new();
+        for i in 0..4 {
+            load.insert(i, 1);
+        }
+        // 所有核负载均为 1，应选索引最小的 (0)
+        assert_eq!(select_best_core(4, &load), 0);
+    }
+
+    #[test]
+    fn test_select_best_core_least_loaded() {
+        let mut load = HashMap::new();
+        load.insert(0, 3);
+        load.insert(1, 5);
+        load.insert(2, 1);
+        load.insert(3, 3);
+        // core 2 负载最低 (1)
+        assert_eq!(select_best_core(4, &load), 2);
+    }
+
+    #[test]
+    fn test_select_best_core_tie_breaker() {
+        let mut load = HashMap::new();
+        load.insert(0, 2);
+        load.insert(1, 1);
+        load.insert(2, 1);
+        load.insert(3, 2);
+        // core 1 和 2 负载相同 (均为 1)，选最小索引 (1)
+        assert_eq!(select_best_core(4, &load), 1);
     }
 }

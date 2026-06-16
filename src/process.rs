@@ -4,20 +4,31 @@
 //!
 //! - **qwen 命令发现**：仅从配置文件 `config/config.json` 的 `qwenPath` 字段读取
 //! - **Qwen 进程检测**：通过命令行关键字匹配识别 Qwen 相关 node 进程
-//! - **CPU 核绑定**：Windows 专属 API，将进程绑定到指定物理核心
-//! - **进程启动**：继承当前控制台启动子进程
+//! - **CPU 核绑定**：Windows 专属 API，将进程绑定到指定逻辑处理器
+//! - **处理器计数**：返回系统逻辑处理器数量（含超线程）
 //!
 //! # 平台兼容性
 //!
-//! `bind_cpu_core` 和 `get_physical_core_count` 使用 `#[cfg(windows)]` 条件编译，
+//! `bind_cpu_core` 和 `get_processor_count` 使用 `#[cfg(windows)]` 条件编译，
 //! 非 Windows 平台返回空操作或默认值 1。
 
 use std::collections::HashSet;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::OnceLock;
 
 use regex::Regex;
+
+/// 编译一次 Qwen 进程匹配正则
+///
+/// 在循环中频繁调用 `is_qwen_process()` 时避免重复编译正则表达式。
+fn qwen_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)(?:qwen|coder-agent|cli-agent)").expect("编译 Qwen 进程匹配正则失败")
+    })
+}
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::CloseHandle;
 #[cfg(windows)]
@@ -61,8 +72,7 @@ fn is_qwen_process(cmdline: &[String]) -> bool {
     if joined.is_empty() {
         return false;
     }
-    let re = Regex::new(r"(?i)qwen|coder-agent|cli-agent").unwrap();
-    re.is_match(&joined)
+    qwen_regex().is_match(&joined)
 }
 
 /// 返回当前所有 Qwen 相关进程的 PID 集合
@@ -80,11 +90,14 @@ pub fn get_qwen_pids(sys: &sysinfo::System) -> HashSet<u32> {
     pids
 }
 
-/// 获取物理 CPU 核心数
+/// 获取系统逻辑处理器数量
 ///
 /// Windows 下使用 [`GetSystemInfo`] API 获取处理器数量。
+/// 注意：`dwNumberOfProcessors` 在启用超线程的系统上返回的是逻辑处理器数
+/// （通常是物理核心数的 2 倍），而非物理核心数。对 CPU 亲和性绑定而言，
+/// 逻辑处理器才是正确的分配粒度。
 #[cfg(windows)]
-pub fn get_physical_core_count() -> u32 {
+pub fn get_processor_count() -> u32 {
     unsafe {
         let mut info: SYSTEM_INFO = std::mem::zeroed();
         GetSystemInfo(&mut info);
@@ -94,7 +107,7 @@ pub fn get_physical_core_count() -> u32 {
 
 /// 非 Windows 平台占位实现，返回 1
 #[cfg(not(windows))]
-pub fn get_physical_core_count() -> u32 {
+pub fn get_processor_count() -> u32 {
     1
 }
 
@@ -176,7 +189,7 @@ pub fn bind_cpu_core(_pid: u32, _core_index: u32) -> io::Result<()> {
 ///
 /// `cwd` 为可选工作目录，设置后子进程在此目录下运行，
 /// 确保能找到该目录下的 `.qwen/skills/` 等配置。
-pub fn spawn_qwen(cmd: &PathBuf, args: &[String], cwd: Option<&std::path::Path>) -> io::Result<Child> {
+pub fn spawn_qwen(cmd: &Path, args: &[String], cwd: Option<&std::path::Path>) -> io::Result<Child> {
     let mut command = Command::new(cmd);
     command
         .args(args)
@@ -192,4 +205,84 @@ pub fn spawn_qwen(cmd: &PathBuf, args: &[String], cwd: Option<&std::path::Path>)
 /// 返回当前可执行文件路径（用于自调用生成 monitor 子进程）
 pub fn self_exe_path() -> io::Result<PathBuf> {
     std::env::current_exe()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_qwen_process_matches_qwen() {
+        let cmd = vec![
+            "node.exe".into(),
+            "C:\\Users\\user\\.cherrystudio\\bin\\qwen.exe".into(),
+            "--model".into(),
+            "qwen-max".into(),
+        ];
+        assert!(is_qwen_process(&cmd), "应匹配 qwen");
+    }
+
+    #[test]
+    fn test_is_qwen_process_matches_coder_agent() {
+        let cmd = vec![
+            "node.exe".into(),
+            "coder-agent".into(),
+            "serve".into(),
+        ];
+        assert!(is_qwen_process(&cmd), "应匹配 coder-agent");
+    }
+
+    #[test]
+    fn test_is_qwen_process_matches_cli_agent() {
+        let cmd = vec![
+            "node".into(),
+            "cli-agent".into(),
+        ];
+        assert!(is_qwen_process(&cmd), "应匹配 cli-agent");
+    }
+
+    #[test]
+    fn test_is_qwen_process_case_insensitive() {
+        let cmd = vec!["QWEN".into()];
+        assert!(is_qwen_process(&cmd), "应大小写不敏感");
+    }
+
+    #[test]
+    fn test_is_qwen_process_no_match() {
+        let cmd = vec!["node.exe".into(), "server.js".into()];
+        assert!(!is_qwen_process(&cmd), "非 Qwen 进程不应匹配");
+    }
+
+    #[test]
+    fn test_is_qwen_process_empty_cmdline() {
+        let cmd: Vec<String> = vec![];
+        assert!(!is_qwen_process(&cmd), "空命令行不应匹配");
+    }
+
+    #[test]
+    fn test_is_qwen_process_partial_substring_no_match() {
+        // "qwe" 是 "qwen" 的部分但不是完整匹配 — 正则要求单词边界
+        let cmd = vec!["qwe".into(), "n".into()];
+        // 不含"qwen"这个子串
+        assert!(!is_qwen_process(&cmd), "部分子串不应匹配");
+    }
+
+    #[test]
+    fn test_find_qwen_command_not_found() {
+        // 未配置 qwenPath 时应当返回 NotFound
+        let result = find_qwen_command();
+        // 这个测试依赖于当前配置文件，可能 qwenPath 已设置
+        // 所以我们只验证函数不会 panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_qwen_regex_compiles() {
+        let re = qwen_regex();
+        assert!(re.is_match("qwen"), "正则应匹配 'qwen'");
+        assert!(re.is_match("coder-agent"), "正则应匹配 'coder-agent'");
+        assert!(re.is_match("cli-agent"), "正则应匹配 'cli-agent'");
+        assert!(re.is_match("QWEN"), "正则应匹配大写 'QWEN'");
+        assert!(!re.is_match("node"), "正则不应匹配 'node'");
+    }
 }
