@@ -90,7 +90,7 @@ fn interactive_setup() -> ExitCode {
     stdout().flush().ok();
     let mut line = String::new();
     stdin().read_line(&mut line).ok();
-    let line = line.trim().to_string();
+    let line = line.trim().trim_matches('"').trim().to_string();
     let qwen_path = if line.is_empty() {
         None
     } else {
@@ -214,6 +214,7 @@ fn cmd_init_config(
     let mut changed = false;
 
     if let Some(p) = qwen_path {
+        let p = p.trim_matches('"').to_string();
         let path = std::path::Path::new(&p);
         if !path.exists() {
             eprintln!("路径不存在: {}", p);
