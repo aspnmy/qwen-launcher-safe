@@ -7,7 +7,7 @@
 //! 3. **子进程发现** — 轮询 5 秒检测新产生的 Qwen 子进程
 //! 4. **注册与绑定** — 向共享状态文件注册实例并绑定独占 CPU 核
 //! 5. **后台监控** — 自生成 `monitor` 子进程定期检查内存
-//! 6. **等待退出** — 阻塞等待 Qwen 主进程退出
+//! 6. **等待退出** — 收养直接子进程后轮询所有监控 PID 直至消亡
 //! 7. **清理** — 停止监控并注销所有已注册实例
 
 use std::collections::HashSet;
@@ -205,15 +205,42 @@ fn spawn_monitor() -> io::Result<Child> {
     Ok(child)
 }
 
-/// 等待 Qwen 主进程退出并返回退出码
-fn wait_for_qwen(mut child: Child, _monitored_pids: &[u32]) -> i32 {
-    let exit_status = child.wait();
-    match exit_status {
-        Ok(status) => status.code().unwrap_or(0),
-        Err(e) => {
-            error!("等待 Qwen 失败: {}", e);
-            1
+/// 等待 Qwen 退出
+///
+/// 支持两种场景：
+/// - **直接进程**（qwen.exe）：`child.wait()` 阻塞直到退出，`monitored_pids` 同 PID → 循环立即退出
+/// - **批处理封装**（qwen.cmd → node.exe）：`child.wait()` 先退出（cmd 包装器），
+///   然后轮询监控列表中的 node PID 直到全部消亡，控制台保持打开
+fn wait_for_qwen(mut child: Child, monitored_pids: &[u32]) -> i32 {
+    // 先收养直接子进程（避免僵尸进程），不关心其退出码
+    let _ = child.wait();
+
+    // 如果直接子进程就是唯一监控目标，直接返回
+    if monitored_pids.is_empty() {
+        return 0;
+    }
+
+    // 轮询所有监控 PID，直到全部消亡
+    info!("等待 {} 个 Qwen 进程退出...", monitored_pids.len());
+    let deadline = Instant::now() + Duration::from_secs(86400); // 24 小时兜底
+    loop {
+        let mut sys = sysinfo::System::new_all();
+        sys.refresh_all();
+
+        let still_alive = monitored_pids
+            .iter()
+            .any(|pid| sys.process(sysinfo::Pid::from_u32(*pid)).is_some());
+
+        if !still_alive {
+            return 0;
         }
+
+        if Instant::now() >= deadline {
+            warn!("等待超时（24 小时），强制退出");
+            return 1;
+        }
+
+        thread::sleep(Duration::from_secs(2));
     }
 }
 
