@@ -36,6 +36,29 @@ mod monitor;
 mod process;
 mod state;
 
+/// 全角字符 → 半角字符转换
+///
+/// 覆盖：字母、数字、符号（引号、逗号、空格等）。
+/// 用户输入法常输出全角字符，统一归一化避免路径匹配失败。
+fn normalize_input(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            // 全角字母数字符号 U+FF01..U+FF5E → 半角 U+21..U+7E（偏移 0xFEE0）
+            '\u{FF01}'..='\u{FF5E}' => {
+                out.push(char::from_u32(c as u32 - 0xFEE0).unwrap_or(c));
+            }
+            // 全角引号（左/右）
+            '\u{201C}' | '\u{201D}' | '\u{300C}' | '\u{300D}' => out.push('"'),
+            // 全角空格
+            '\u{3000}' => out.push(' '),
+            // 保留原字符
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Qwen Code 资源保护启动器 — Rust 重构版
 #[derive(Parser, Debug)]
 #[command(name = "qwen-launcher-safe", version, about)]
@@ -90,7 +113,7 @@ fn interactive_setup() -> ExitCode {
     stdout().flush().ok();
     let mut line = String::new();
     stdin().read_line(&mut line).ok();
-    let line = line.trim().trim_matches('"').trim().to_string();
+    let line = normalize_input(&line).trim().trim_matches('"').trim().to_string();
     let qwen_path = if line.is_empty() {
         None
     } else {
@@ -214,7 +237,7 @@ fn cmd_init_config(
     let mut changed = false;
 
     if let Some(p) = qwen_path {
-        let p = p.trim_matches('"').to_string();
+        let p = normalize_input(&p).trim_matches('"').to_string();
         let path = std::path::Path::new(&p);
         if !path.exists() {
             eprintln!("路径不存在: {}", p);
