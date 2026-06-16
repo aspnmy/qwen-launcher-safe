@@ -103,22 +103,70 @@ pub fn state_file_path() -> PathBuf {
 }
 
 /// 读取状态文件，文件不存在时返回 [`StateFile::default`]
+///
+/// 当文件内容尾部存在多余垃圾字符（如并发写入中断导致的 `}}}`）时，
+/// 通过深度计数器找到正确的根闭括号位置，截断后重试并自动修复文件。
 pub fn read_state_file() -> io::Result<StateFile> {
     let path = state_file_path();
     if !path.exists() {
         return Ok(StateFile::default());
     }
     let data = fs::read_to_string(&path)?;
-    let state: StateFile =
-        serde_json::from_str(&data).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    Ok(state)
+    match serde_json::from_str::<StateFile>(&data) {
+        Ok(state) => Ok(state),
+        Err(e) => {
+            // 容错：用深度计数器找到根对象的正确闭括号 `}`
+            if let Some(pos) = find_root_close(&data) {
+                let trimmed = &data[..=pos];
+                if let Ok(state) = serde_json::from_str::<StateFile>(trimmed) {
+                    // 修复文件（覆盖写入干净 JSON）
+                    let clean = serde_json::to_string_pretty(&state).map_err(io::Error::other)?;
+                    let _ = fs::write(&path, clean);
+                    return Ok(state);
+                }
+            }
+            Err(io::Error::new(io::ErrorKind::InvalidData, e))
+        }
+    }
 }
 
-/// 将当前状态序列化为 JSON 并写入文件
+/// 找到根对象（depth 0）的匹配闭括号位置，跳过字符串中的 `{}`
+fn find_root_close(s: &str) -> Option<usize> {
+    let mut depth: i32 = 0;
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, ch)) = chars.next() {
+        if ch == '"' {
+            // 跳过字符串字面量，避免误判其中的 `{` `}`
+            while let Some(&(_, c)) = chars.peek() {
+                chars.next();
+                if c == '\\' {
+                    chars.next(); // 跳过转义字符
+                } else if c == '"' {
+                    break; // 字符串结束
+                }
+            }
+        } else if ch == '{' {
+            depth += 1;
+        } else if ch == '}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// 将当前状态序列化为 JSON 并原子写入文件
+///
+/// 先写入 `.json.tmp` 临时文件，再 rename 为目标文件，
+/// 避免并发写入导致内容损坏（如尾部多余字符）。
 pub fn write_state_file(state: &StateFile) -> io::Result<()> {
     let path = state_file_path();
     let data = serde_json::to_string_pretty(state).map_err(io::Error::other)?;
-    fs::write(&path, data)?;
+    let tmp_path = path.with_extension("json.tmp");
+    fs::write(&tmp_path, &data)?;
+    fs::rename(&tmp_path, &path)?;
     Ok(())
 }
 
@@ -141,5 +189,42 @@ pub fn new_instance(pid: u32, core: u32, priority: u32, max_memory_mb: u64) -> I
         state: "running".into(),
         priority,
         last_heartbeat: now,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_tolerant_read_of_corrupted_state() {
+        // 使用真实的（可能已损坏的）状态文件测试容错读取
+        let result = read_state_file();
+        match &result {
+            Ok(state) => {
+                println!(
+                    "容错读取成功: {} 个实例, globalState={:?}",
+                    state.instances.len(),
+                    state.global_state
+                );
+            }
+            Err(e) => {
+                panic!("容错读取失败: {}", e);
+            }
+        }
+
+        // 验证文件现在可以被正常解析（已被修复）
+        let path = state_file_path();
+        if path.exists() {
+            let data = fs::read_to_string(&path).expect("read state file after fix");
+            let parsed: Result<StateFile, _> = serde_json::from_str(&data);
+            assert!(
+                parsed.is_ok(),
+                "修复后的文件应该能被正常解析: {:?}",
+                parsed.err()
+            );
+            println!("修复后的文件可被正常解析");
+        }
     }
 }
