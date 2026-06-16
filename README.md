@@ -7,10 +7,17 @@ A Rust rewrite of the [qwen-launcher.ps1](https://github.com/aspnmy/qwen-coder) 
 
 ## Features
 
-- **Process Discovery** — Automatically searches for `qwen` command in stable install directories first, then PATH (filtering out transient fnm/volta/nvm wrappers), then parent-directory `node_modules/.bin/` chains.
-- **Config File Fallback** — If auto-search finds nothing, reads `config/config.json` (alongside the executable) for a manually specified `qwenPath`.
-- **Interactive Setup Wizard** — When no config file exists, `init`/`init-config` without args enters a 3-step interactive wizard (qwen path, memory limit, monitor interval).
+- **Process Discovery** — Reads `qwenPath` from `config/config.json` (alongside the executable). No hardcoded paths or auto-discovery.
+- **Interactive Setup Wizard** — If no config file exists or `qwenPath` is unset, `init`/`init-config` without args or `launch` enters a 3-step interactive wizard to configure qwen path, memory limit, and monitor interval.
 - **`init` Alias** — `init` is a shortcut alias for `init-config`.
+
+## First Use
+
+```powershell
+# First time: enters interactive wizard (no config → prompts for qwen path, memory, interval)
+qwen-launcher-safe init
+```
+
 - **CPU Core Binding** — Each Qwen instance gets an exclusive physical CPU core for consistent performance.
 - **Shared State File** — Instance registry persists at `%TEMP%\qwen-resource-state.json`, compatible with the existing PowerShell `qwen-resource-monitor` skill.
 - **Background Monitor** — A self-spawned child process (`qwen-launcher-safe monitor`) periodically checks registered instances' memory usage and cleans up vanished PIDs.
@@ -42,24 +49,19 @@ qwen-launcher-safe launch -- --model qwen-max
 .\target\release\qwen-launcher-safe.exe launch --
 ```
 
-### Configure qwen path (interactive wizard)
+### First use (interactive wizard)
 
-When no config file exists, `init` or `init-config` without args enters interactive mode:
+No config exists? `init`, `init-config`, or `launch` enters the setup wizard:
 
 ```powershell
-# Interactive setup (auto-detects qwen, prompts for memory/interval)
+# Interactive setup (prompts for qwen path, memory limit, monitor interval)
 qwen-launcher-safe init
 ```
 
-### Configure qwen path (direct args)
-
-If auto-search fails or you want to skip the wizard, use direct options:
+### Configure qwen path (direct)
 
 ```powershell
-# Auto-detect and save to config
-qwen-launcher-safe init-config --qwen-path auto
-
-# Manual path
+# Specify qwen path explicitly
 qwen-launcher-safe init-config --qwen-path "C:\Users\nasAdmin\.cherrystudio\bin\qwen.exe"
 
 # View current config
@@ -94,15 +96,15 @@ src/
 └── state.rs      — Shared state file (%TEMP%\qwen-resource-state.json) types and I/O
 ```
 
-## Search Order for `qwen`
+## qwen 路径来源
+
+qwen 路径**仅**来自配置文件，无自动搜索、无硬编码路径。
 
 ```
-① config/config.json           (manual config file, qwenPath — user config is authoritative)
-② PATH environment variable    (fnm/volta/nvm transient wrappers filtered out)
-③ {cwd}/node_modules/.bin/...  (walk up parent directories)
+① config/config.json → qwenPath 字段（唯一来源）
 ```
 
-No hardcoded install paths — PATH is the universal discovery mechanism across all platforms and installations.
+如果配置文件不存在或 `qwenPath` 未设置，`launch` 或 `init` 会自动进入交互式配置向导。
 
 ## Config File
 

@@ -5,7 +5,7 @@
 //! - `monitor` — 后台资源监控循环
 //! - `init-config` — 初始化或更新配置文件
 //!
-//! 双击 `.exe` 无参数时默认进入 `launch` 模式（自动搜索 qwen 并启动）。
+//! 双击 `.exe` 无参数时默认进入 `launch` 模式。
 //!
 //! # 使用示例
 //!
@@ -16,8 +16,11 @@
 //! # 启动 Qwen 并传递参数
 //! qwen-launcher-safe launch -- --model qwen-max
 //!
+//! # 首次使用：交互式配置向导
+//! qwen-launcher-safe init
+//!
 //! # 配置 qwen 路径
-//! qwen-launcher-safe init-config --qwen-path auto
+//! qwen-launcher-safe init-config --qwen-path "C:\path\to\qwen.exe"
 //!
 //! # 查看配置
 //! qwen-launcher-safe init-config --show
@@ -52,7 +55,7 @@ enum Cli {
     /// 初始化或更新 .config 配置文件
     #[command(alias = "init")]
     InitConfig {
-        /// qwen 可执行文件路径，传 "auto" 自动搜索
+        /// qwen 可执行文件完整路径
         #[arg(long)]
         qwen_path: Option<String>,
         /// 最大内存限制（MB）
@@ -69,53 +72,34 @@ enum Cli {
 
 /// 交互式配置向导
 ///
-/// 当配置文件不存在且用户未指定任何参数时自动进入。
+/// 当配置文件不存在或 qwenPath 未设置时自动进入。
 /// 引导用户配置 qwen 路径、内存限制和监控间隔。
+/// 不进行任何自动搜索——完全由用户输入决定。
 fn interactive_setup() -> ExitCode {
     use std::io::{stdin, stdout, Write};
 
     println!("+----------------------------------------------+");
-    println!("|  未检测到配置文件，进入交互式配置向导         |");
-    println!("|  （直接回车使用默认值）                       |");
+    println!("|  qwenPath 未配置，进入交互式配置向导          |");
+    println!("|  （直接回车使用默认值，留空则跳过）           |");
     println!("+----------------------------------------------+");
     println!();
 
     // ── 步骤 1：Qwen 路径 ──
     println!("[步骤 1/3] Qwen 可执行文件路径");
-    let qwen_path = match process::find_qwen_command() {
-        Ok(auto_path) => {
-            let display = auto_path.to_string_lossy().to_string();
-            print!("  自动搜索到: {}\n  是否使用此路径？[Y/n]: ", display);
-            stdout().flush().ok();
-            let mut line = String::new();
-            stdin().read_line(&mut line).ok();
-            let line = line.trim().to_lowercase();
-            if line.is_empty() || line == "y" || line == "yes" {
-                Some(display)
-            } else {
-                print!("  请输入 qwen 路径（或留空跳过）: ");
-                stdout().flush().ok();
-                let mut manual = String::new();
-                stdin().read_line(&mut manual).ok();
-                let manual = manual.trim().to_string();
-                if manual.is_empty() {
-                    None
-                } else {
-                    Some(manual)
-                }
-            }
-        }
-        Err(_) => {
-            print!("  自动搜索失败，请输入 qwen 路径（或留空跳过）: ");
-            stdout().flush().ok();
-            let mut manual = String::new();
-            stdin().read_line(&mut manual).ok();
-            let manual = manual.trim().to_string();
-            if manual.is_empty() {
-                None
-            } else {
-                Some(manual)
-            }
+    print!("  请输入 qwen.exe 或 qwen.cmd 的完整路径: ");
+    stdout().flush().ok();
+    let mut line = String::new();
+    stdin().read_line(&mut line).ok();
+    let line = line.trim().to_string();
+    let qwen_path = if line.is_empty() {
+        None
+    } else {
+        let path = std::path::Path::new(&line);
+        if path.exists() {
+            Some(line)
+        } else {
+            eprintln!("  [警告] 路径不存在，将跳过 qwenPath 配置");
+            None
         }
     };
 
@@ -177,7 +161,16 @@ fn interactive_setup() -> ExitCode {
 /// 双击 `.exe` 无参数时：`try_parse` 失败（MissingSubcommand）→ 默认走 `launch`。
 fn main() -> ExitCode {
     match Cli::try_parse() {
-        Ok(Cli::Launch { qwen_args }) => launcher::run(&qwen_args),
+        Ok(Cli::Launch { qwen_args }) => {
+            // 启动前检查 qwenPath 是否已配置
+            if process::find_qwen_command().is_err() {
+                eprintln!("qwenPath 未配置，进入交互式配置向导...");
+                if interactive_setup() != ExitCode::SUCCESS {
+                    return ExitCode::from(1);
+                }
+            }
+            launcher::run(&qwen_args)
+        }
         Ok(Cli::Monitor { interval }) => monitor::run(Some(interval)),
         Ok(Cli::InitConfig {
             qwen_path,
@@ -201,10 +194,10 @@ fn main() -> ExitCode {
 ///
 /// 支持以下操作：
 /// - `--show`：显示当前配置
-/// - `--qwen-path auto`：自动搜索并写入
-/// - `--qwen-path <路径>`：手动指定路径
+/// - `--qwen-path <路径>`：手动指定 qwen 路径
 /// - `--max-memory-mb <MB>`：调整内存限制
 /// - `--monitor-interval <秒>`：调整轮询间隔
+/// - 无参数且配置文件不存在或 qwenPath 为空：进入交互式配置向导
 fn cmd_init_config(
     qwen_path: Option<String>,
     max_memory_mb: Option<u64>,
@@ -221,24 +214,12 @@ fn cmd_init_config(
     let mut changed = false;
 
     if let Some(p) = qwen_path {
-        let resolved = if p.eq_ignore_ascii_case("auto") {
-            // 先尝试自动搜索，搜到就写入配置文件
-            match process::find_qwen_command() {
-                Ok(path) => path.to_string_lossy().to_string(),
-                Err(_) => {
-                    eprintln!("自动搜索失败，请手动指定路径");
-                    return ExitCode::from(1);
-                }
-            }
-        } else {
-            let path = std::path::Path::new(&p);
-            if !path.exists() {
-                eprintln!("路径不存在: {}", p);
-                return ExitCode::from(1);
-            }
-            p
-        };
-        cfg.qwen_path = Some(resolved);
+        let path = std::path::Path::new(&p);
+        if !path.exists() {
+            eprintln!("路径不存在: {}", p);
+            return ExitCode::from(1);
+        }
+        cfg.qwen_path = Some(p);
         changed = true;
     }
     if let Some(m) = max_memory_mb {
@@ -251,7 +232,8 @@ fn cmd_init_config(
     }
 
     if !changed {
-        if !config::config_file_path().exists() {
+        // 配置文件不存在或 qwenPath 为空 → 进入交互式向导
+        if !config::config_file_path().exists() || cfg.qwen_path.is_none() {
             return interactive_setup();
         }
         eprintln!(

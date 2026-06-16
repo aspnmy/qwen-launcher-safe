@@ -2,7 +2,7 @@
 //!
 //! 提供跨平台（Windows 为主）的进程管理功能：
 //!
-//! - **qwen 命令发现**：PATH → 常见安装位置 → 节点模块 → 配置文件兜底
+//! - **qwen 命令发现**：仅从配置文件 `config/config.json` 的 `qwenPath` 字段读取
 //! - **Qwen 进程检测**：通过命令行关键字匹配识别 Qwen 相关 node 进程
 //! - **CPU 核绑定**：Windows 专属 API，将进程绑定到指定物理核心
 //! - **进程启动**：继承当前控制台启动子进程
@@ -29,99 +29,26 @@ use windows_sys::Win32::System::Threading::{
 
 use crate::config;
 
-/// 搜索 qwen 命令的候选名称列表
-const SEARCH_CANDIDATES: &[&str] = &[
-    "qwen.cmd", // npm global bin
-    "qwen.exe", // standalone exe
-    "qwen",     // Unix / PATH without .exe
-];
-
 /// 查找 qwen 命令
 ///
-/// 搜索优先级：
-/// 1. 配置文件 `<exe 同级>/config/config.json` 中的 `qwenPath`（用户显式配置优先）
-/// 2. 常见全局安装位置（npm / localappdata 等）
-/// 3. `PATH` 环境变量（过滤临时包装器）
-/// 4. 当前目录向上遍历 `node_modules/.bin/`
-///
-/// 全部失败时返回 [`io::ErrorKind::NotFound`]。
+/// 仅从配置文件读取 `qwenPath` 字段，不进行任何自动搜索。
+/// 若配置未设置或路径不存在，返回 [`io::ErrorKind::NotFound`]。
 pub fn find_qwen_command() -> io::Result<PathBuf> {
     let cfg = config::read_config();
 
-    // ── 链路 A：配置文件优先（用户显式配置） ──
     if let Some(ref path_str) = cfg.qwen_path {
         let path = PathBuf::from(path_str);
         if path.exists() {
-            log::info!("配置文件指定 qwen: {:?}", path);
+            log::info!("qwen 路径: {:?}（来自配置文件）", path);
             return Ok(path);
         }
-        log::warn!("配置文件 qwenPath {:?} 不存在，回退到自动搜索", path);
+        log::warn!("配置文件 qwenPath {:?} 不存在", path);
     }
 
-    // ── 链路 B：自动搜索（通用降级） ──
-    let auto = auto_search();
-    if let Some(path) = auto {
-        log::info!("自动搜索到 qwen: {:?}", path);
-        return Ok(path);
-    }
-
-    // ── 全部失败 ──
     Err(io::Error::new(
         io::ErrorKind::NotFound,
-        "找不到 qwen 命令：配置文件未指定且自动搜索无结果。\n  \
-         请先运行 `qwen-launcher-safe init-config --qwen-path <路径>`",
+        "qwenPath 未配置。请运行 `qwen-launcher-safe init-config` 进行配置",
     ))
-}
-
-/// 判断路径是否为临时/转发的包装器（fnm、volta、nvm 等）
-fn is_transient_wrapper(path: &std::path::Path) -> bool {
-    let s = path.to_string_lossy().to_lowercase();
-    s.contains("fnm_multishells")
-        || s.contains("fnm\\multishells")
-        || s.contains("volta")
-        || s.contains("\\.nvm\\")
-        || s.contains("_nvm\\")
-}
-
-/// 自动搜索 qwen（通用方法：PATH → node_modules/.bin）
-fn auto_search() -> Option<PathBuf> {
-    // 1. PATH 搜索（过滤掉 fnm/volta/nvm 等临时包装器路径）
-    for name in SEARCH_CANDIDATES {
-        if let Ok(path) = which(name) {
-            if !is_transient_wrapper(&path) {
-                return Some(path);
-            }
-        }
-    }
-
-    // 2. 从当前目录向上找 node_modules/.bin/
-    if let Ok(cwd) = std::env::current_dir() {
-        let mut dir = Some(cwd.as_path());
-        while let Some(d) = dir {
-            let bin_dir = d.join("node_modules").join(".bin");
-            for name in SEARCH_CANDIDATES {
-                let candidate = bin_dir.join(name);
-                if candidate.exists() {
-                    return Some(candidate);
-                }
-            }
-            dir = d.parent();
-        }
-    }
-
-    None
-}
-
-/// 在 `PATH` 中查找可执行文件（简化版 which）
-fn which(name: &str) -> io::Result<PathBuf> {
-    let path_vals = std::env::var_os("PATH").unwrap_or_default();
-    for dir in std::env::split_paths(&path_vals) {
-        let candidate = dir.join(name);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-    Err(io::Error::new(io::ErrorKind::NotFound, "不在 PATH 中"))
 }
 
 /// 检测是否为 Qwen 相关进程

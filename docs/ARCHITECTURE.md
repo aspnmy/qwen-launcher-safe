@@ -36,14 +36,16 @@ src/
 
 ## 搜索链路
 
+qwen 路径**仅**来自配置文件，无自动搜索。
+
 ```
 find_qwen_command()
 │
-├─ ① config/config.json      qwenPath 字段（用户显式配置优先）
-├─ ② PATH 环境变量           过滤 fnm/volta/nvm 临时包装器
-├─ ③ node_modules/.bin/…    从当前目录向上遍历
-│
-└─ 全部失败 → io::Error::NotFound
+└─ config/config.json → qwenPath 字段（唯一来源）
+    ├─ 已设置且存在 → 返回该路径
+    ├─ 已设置但不存在 → 返回 NotFound
+    └─ 未设置 → 返回 NotFound（触发交互式向导）
+```
 
 ## 状态文件格式
 
