@@ -5,9 +5,14 @@
 //! - `monitor` — 后台资源监控循环
 //! - `init-config` — 初始化或更新配置文件
 //!
+//! 双击 `.exe` 无参数时默认进入 `launch` 模式（自动搜索 qwen 并启动）。
+//!
 //! # 使用示例
 //!
 //! ```bash
+//! # 双击启动（无参） — 等价于 launch 无参数
+//! qwen-launcher-safe.exe
+//!
 //! # 启动 Qwen 并传递参数
 //! qwen-launcher-safe launch -- --model qwen-max
 //!
@@ -64,17 +69,26 @@ enum Cli {
 /// 程序入口
 ///
 /// 解析 CLI 参数后分发到对应子命令处理函数。
+/// 双击 `.exe` 无参数时：`try_parse` 失败（MissingSubcommand）→ 默认走 `launch`。
 fn main() -> ExitCode {
-    let cli = Cli::parse();
-    match cli {
-        Cli::Launch { qwen_args } => launcher::run(&qwen_args),
-        Cli::Monitor { interval } => monitor::run(Some(interval)),
-        Cli::InitConfig {
+    match Cli::try_parse() {
+        Ok(Cli::Launch { qwen_args }) => launcher::run(&qwen_args),
+        Ok(Cli::Monitor { interval }) => monitor::run(Some(interval)),
+        Ok(Cli::InitConfig {
             qwen_path,
             max_memory_mb,
             monitor_interval,
             show,
-        } => cmd_init_config(qwen_path, max_memory_mb, monitor_interval, show),
+        }) => cmd_init_config(qwen_path, max_memory_mb, monitor_interval, show),
+        Err(e) => {
+            // 双击 .exe 无参：缺少子命令 → 默认走 launch
+            if e.kind() == clap::error::ErrorKind::MissingSubcommand {
+                launcher::run(&[])
+            } else {
+                // 其他解析错误（如无效参数）正常报错退出
+                e.exit()
+            }
+        }
     }
 }
 
