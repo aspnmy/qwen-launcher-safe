@@ -50,6 +50,7 @@ enum Cli {
         interval: u64,
     },
     /// 初始化或更新 .config 配置文件
+    #[command(alias = "init")]
     InitConfig {
         /// qwen 可执行文件路径，传 "auto" 自动搜索
         #[arg(long)]
@@ -64,6 +65,110 @@ enum Cli {
         #[arg(long)]
         show: bool,
     },
+}
+
+/// 交互式配置向导
+///
+/// 当配置文件不存在且用户未指定任何参数时自动进入。
+/// 引导用户配置 qwen 路径、内存限制和监控间隔。
+fn interactive_setup() -> ExitCode {
+    use std::io::{stdin, stdout, Write};
+
+    println!("+----------------------------------------------+");
+    println!("|  未检测到配置文件，进入交互式配置向导         |");
+    println!("|  （直接回车使用默认值）                       |");
+    println!("+----------------------------------------------+");
+    println!();
+
+    // ── 步骤 1：Qwen 路径 ──
+    println!("[步骤 1/3] Qwen 可执行文件路径");
+    let qwen_path = match process::find_qwen_command() {
+        Ok(auto_path) => {
+            let display = auto_path.to_string_lossy().to_string();
+            print!("  自动搜索到: {}\n  是否使用此路径？[Y/n]: ", display);
+            stdout().flush().ok();
+            let mut line = String::new();
+            stdin().read_line(&mut line).ok();
+            let line = line.trim().to_lowercase();
+            if line.is_empty() || line == "y" || line == "yes" {
+                Some(display)
+            } else {
+                print!("  请输入 qwen 路径（或留空跳过）: ");
+                stdout().flush().ok();
+                let mut manual = String::new();
+                stdin().read_line(&mut manual).ok();
+                let manual = manual.trim().to_string();
+                if manual.is_empty() {
+                    None
+                } else {
+                    Some(manual)
+                }
+            }
+        }
+        Err(_) => {
+            print!("  自动搜索失败，请输入 qwen 路径（或留空跳过）: ");
+            stdout().flush().ok();
+            let mut manual = String::new();
+            stdin().read_line(&mut manual).ok();
+            let manual = manual.trim().to_string();
+            if manual.is_empty() {
+                None
+            } else {
+                Some(manual)
+            }
+        }
+    };
+
+    // ── 步骤 2：内存限制 ──
+    println!();
+    println!("[步骤 2/3] 最大内存限制 (MB) [默认 1024]");
+    print!("  请输入: ");
+    stdout().flush().ok();
+    let mut line = String::new();
+    stdin().read_line(&mut line).ok();
+    let line = line.trim();
+    let max_memory_mb = if line.is_empty() {
+        1024
+    } else {
+        line.parse::<u64>().unwrap_or(1024)
+    };
+
+    // ── 步骤 3：监控间隔 ──
+    println!();
+    println!("[步骤 3/3] 监控轮询间隔 (秒) [默认 10]");
+    print!("  请输入: ");
+    stdout().flush().ok();
+    let mut line = String::new();
+    stdin().read_line(&mut line).ok();
+    let line = line.trim();
+    let monitor_interval = if line.is_empty() {
+        10
+    } else {
+        line.parse::<u64>().unwrap_or(10)
+    };
+
+    // ── 写入配置 ──
+    let mut cfg = config::LauncherConfig {
+        qwen_path: None,
+        max_memory_mb,
+        monitor_interval_sec: monitor_interval,
+    };
+    if let Some(ref path) = qwen_path {
+        cfg.qwen_path = Some(path.clone());
+    }
+
+    println!();
+    match config::write_config(&cfg) {
+        Ok(()) => {
+            println!("[OK] 配置已完成，已写入: {:?}", config::config_file_path());
+            println!("{}", serde_json::to_string_pretty(&cfg).unwrap());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("[ERR] 写入配置失败: {}", e);
+            ExitCode::from(1)
+        }
+    }
 }
 
 /// 程序入口
@@ -146,7 +251,13 @@ fn cmd_init_config(
     }
 
     if !changed {
-        eprintln!("未指定任何配置项。使用 --help 查看选项。");
+        if !config::config_file_path().exists() {
+            return interactive_setup();
+        }
+        eprintln!(
+            "未指定任何配置项。使用 --help 查看选项。\n  当前配置: {:?}",
+            config::config_file_path()
+        );
         return ExitCode::from(1);
     }
 
