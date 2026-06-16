@@ -1,6 +1,6 @@
 //! 配置文件读写模块
 //!
-//! 管理 `~/.qwen-launcher/config.json` 的读取和写入。
+//! 管理 `config/config.json`（与可执行文件同级目录）的读取和写入。
 //! 配置文件用于指定 qwen 路径、内存限制和监控间隔，
 //! 在自动搜索失败时提供兜底方案。
 //!
@@ -52,15 +52,16 @@ impl Default for LauncherConfig {
     }
 }
 
-/// 返回配置文件目录：`~/.qwen-launcher/`
+/// 返回配置文件目录：`<exe 同级>/config/`
 pub fn config_dir() -> PathBuf {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".qwen-launcher")
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    exe_dir.join("config")
 }
 
-/// 返回配置文件路径：`~/.qwen-launcher/config.json`
+/// 返回配置文件路径：`<exe 同级>/config/config.json`
 pub fn config_file_path() -> PathBuf {
     config_dir().join("config.json")
 }
