@@ -1,0 +1,22 @@
+[package]
+name = "qwen-launcher-safe"
+version = "0.1.0"
+edition = "2021"
+description = "Qwen Code 资源保护启动器 — Rust 重构版"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+sysinfo = "0.30"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_System_Threading",
+    "Win32_System_SystemInformation",
+    "Win32_Foundation",
+]}
