@@ -24,7 +24,8 @@ use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
-    OpenProcess, SetProcessAffinityMask, PROCESS_SET_INFORMATION,
+    GetProcessAffinityMask, OpenProcess, SetProcessAffinityMask,
+    PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
 };
 
 use crate::config;
@@ -108,18 +109,61 @@ pub fn get_physical_core_count() -> u32 {
 #[cfg(windows)]
 pub fn bind_cpu_core(pid: u32, core_index: u32) -> io::Result<()> {
     unsafe {
-        let handle = OpenProcess(PROCESS_SET_INFORMATION, 0, pid);
+        let handle = OpenProcess(
+            PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION,
+            0,
+            pid,
+        );
         if handle.is_null() {
             return Err(io::Error::last_os_error());
         }
-        let mask: usize = 1usize << core_index;
-        let ret = SetProcessAffinityMask(handle, mask);
+
+        // 查询进程和系统的有效处理器掩码
+        let mut process_mask: usize = 0;
+        let mut system_mask: usize = 0;
+        let ret = GetProcessAffinityMask(handle, &mut process_mask, &mut system_mask);
+        if ret == 0 {
+            let err = io::Error::last_os_error();
+            CloseHandle(handle);
+            return Err(err);
+        }
+
+        let requested: usize = 1usize << core_index;
+
+        // 验证请求的核心在系统有效范围内
+        if requested & system_mask == 0 {
+            CloseHandle(handle);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "核心 {} 超出系统有效处理器范围 (掩码 {:#016x})",
+                    core_index, system_mask
+                ),
+            ));
+        }
+
+        // 将请求掩码与进程当前有效掩码取交集，
+        // 确保 SetProcessAffinityMask 不会因权限/Job 限制而失败
+        let final_mask = requested & process_mask;
+        if final_mask == 0 {
+            CloseHandle(handle);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "核心 {} 不在进程可用掩码 {:#016x} 内",
+                    core_index, process_mask
+                ),
+            ));
+        }
+
+        let ret = SetProcessAffinityMask(handle, final_mask);
         CloseHandle(handle);
         if ret == 0 {
-            return Err(io::Error::last_os_error());
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
         }
     }
-    Ok(())
 }
 
 /// 非 Windows 平台占位实现（空操作）
