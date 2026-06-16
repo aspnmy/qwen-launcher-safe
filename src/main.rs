@@ -26,6 +26,7 @@
 //! qwen-launcher-safe init-config --show
 //! ```
 
+use std::io::{self, BufRead};
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -49,8 +50,9 @@ fn normalize_input(s: &str) -> String {
                 out.push(char::from_u32(c as u32 - 0xFEE0).unwrap_or(c));
             }
             // 全角引号（双引号 + 单引号）
-            '\u{2018}' | '\u{2019}' | '\u{201C}' | '\u{201D}'
-            | '\u{300C}' | '\u{300D}' => out.push('"'),
+            '\u{2018}' | '\u{2019}' | '\u{201C}' | '\u{201D}' | '\u{300C}' | '\u{300D}' => {
+                out.push('"')
+            }
             // 全角空格
             '\u{3000}' => out.push(' '),
             // 保留原字符
@@ -71,10 +73,14 @@ enum Cli {
         qwen_args: Vec<String>,
     },
     /// 后台资源监控（由 launch 子命令自动启动）
+    #[command(alias = "mon")]
     Monitor {
         /// 轮询间隔（秒）
         #[arg(short, long, default_value_t = 10)]
         interval: u64,
+        /// 父进程 PID（传递后 monitor 在父进程崩溃时自动退出，避免孤儿进程）
+        #[arg(long)]
+        parent_pid: Option<u32>,
     },
     /// 初始化或更新 .config 配置文件
     #[command(alias = "init")]
@@ -97,12 +103,18 @@ enum Cli {
     },
 }
 
-/// 交互式配置向导
+/// 交互式配置向导（从 stdin 读取输入）
 ///
 /// 当配置文件不存在或 qwenPath 未设置时自动进入。
 /// 引导用户配置 qwen 路径、内存限制和监控间隔。
 /// 不进行任何自动搜索——完全由用户输入决定。
 fn interactive_setup() -> ExitCode {
+    let mut stdin = io::stdin().lock();
+    interactive_setup_with(&mut stdin)
+}
+
+/// 交互式配置向导（注入 reader 供测试用）
+fn interactive_setup_with(reader: &mut dyn BufRead) -> ExitCode {
     println!("+----------------------------------------------+");
     println!("|  qwenPath 未配置，进入交互式配置向导          |");
     println!("|  （直接回车使用默认值，留空则跳过）           |");
@@ -111,7 +123,7 @@ fn interactive_setup() -> ExitCode {
 
     // ── 步骤 1：Qwen 路径 ──
     println!("[步骤 1/4] Qwen 可执行文件路径");
-    let line = read_line_normalized();
+    let line = read_line_normalized_from(reader);
     let qwen_path = if line.is_empty() {
         println!("  [跳过] qwenPath 未设置，将使用系统 PATH 查找");
         None
@@ -128,7 +140,7 @@ fn interactive_setup() -> ExitCode {
     // ── 步骤 2：内存限制 ──
     println!();
     println!("[步骤 2/4] 最大内存限制 (MB) [默认 1024]");
-    let line = read_line_raw();
+    let line = read_line_raw_from(reader);
     let max_memory_mb = if line.is_empty() {
         1024
     } else {
@@ -144,7 +156,7 @@ fn interactive_setup() -> ExitCode {
     // ── 步骤 3：监控间隔 ──
     println!();
     println!("[步骤 3/4] 监控轮询间隔 (秒) [默认 10]");
-    let line = read_line_raw();
+    let line = read_line_raw_from(reader);
     let monitor_interval = if line.is_empty() {
         10
     } else {
@@ -160,7 +172,7 @@ fn interactive_setup() -> ExitCode {
     // ── 步骤 4：工作目录（可选） ──
     println!();
     println!("[步骤 4/4] Qwen 工作目录（使子进程加载该目录下的 .qwen/skills/ 技能）");
-    let line = read_line_normalized();
+    let line = read_line_normalized_from(reader);
     let working_dir = if line.is_empty() {
         None
     } else {
@@ -204,19 +216,16 @@ fn interactive_setup() -> ExitCode {
     }
 }
 
-/// 读取一行原始输入（无归一化处理，仅 trim）
-fn read_line_raw() -> String {
-    use std::io::{stdin, stdout, Write};
-    print!("  请输入: ");
-    stdout().flush().ok();
+/// 从指定 reader 读取一行原始输入（无归一化处理，仅 trim）
+fn read_line_raw_from(reader: &mut dyn BufRead) -> String {
     let mut line = String::new();
-    stdin().read_line(&mut line).ok();
+    reader.read_line(&mut line).ok();
     line.trim().to_string()
 }
 
-/// 读取一行输入并做全角→半角归一化、去除引号和空白
-fn read_line_normalized() -> String {
-    let raw = read_line_raw();
+/// 从指定 reader 读取一行输入并做全角→半角归一化、去除引号和空白
+fn read_line_normalized_from(reader: &mut dyn BufRead) -> String {
+    let raw = read_line_raw_from(reader);
     normalize_input(&raw).trim_matches('"').trim().to_string()
 }
 
@@ -236,14 +245,23 @@ fn main() -> ExitCode {
             }
             launcher::run(&qwen_args)
         }
-        Ok(Cli::Monitor { interval }) => monitor::run(Some(interval)),
+        Ok(Cli::Monitor {
+            interval,
+            parent_pid,
+        }) => monitor::run(Some(interval), parent_pid),
         Ok(Cli::InitConfig {
             qwen_path,
             max_memory_mb,
             monitor_interval,
             working_dir,
             show,
-        }) => cmd_init_config(qwen_path, max_memory_mb, monitor_interval, working_dir, show),
+        }) => cmd_init_config(
+            qwen_path,
+            max_memory_mb,
+            monitor_interval,
+            working_dir,
+            show,
+        ),
         Err(e) => {
             // 双击 .exe 无参：缺少子命令 → 默认走 launch
             if e.kind() == clap::error::ErrorKind::MissingSubcommand {
@@ -271,6 +289,11 @@ fn cmd_init_config(
     working_dir: Option<String>,
     show: bool,
 ) -> ExitCode {
+    // 初始化日志，使 config::read_config() 中的 warn! 可见
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+        .format_timestamp_secs()
+        .try_init();
+
     if show {
         let cfg = config::read_config();
         match serde_json::to_string_pretty(&cfg) {
@@ -337,5 +360,110 @@ fn cmd_init_config(
             eprintln!("写入配置失败: {}", e);
             ExitCode::from(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn test_normalize_input_fullwidth_letters() {
+        // 全角 A → 半角 A
+        assert_eq!(normalize_input("\u{FF21}"), "A");
+        assert_eq!(normalize_input("\u{FF41}"), "a");
+    }
+
+    #[test]
+    fn test_normalize_input_fullwidth_digits() {
+        // 全角 １ ２ ３ → 半角 1 2 3
+        assert_eq!(normalize_input("\u{FF11}\u{FF12}\u{FF13}"), "123");
+    }
+
+    #[test]
+    fn test_normalize_input_fullwidth_space() {
+        assert_eq!(normalize_input("\u{3000}"), " ");
+    }
+
+    #[test]
+    fn test_normalize_input_halfwidth_unchanged() {
+        assert_eq!(normalize_input("hello world 123"), "hello world 123");
+    }
+
+    #[test]
+    fn test_normalize_input_mixed_content() {
+        // 全角路径混合：Ｃ:\ｐａｔｈ\ｔｅｓｔ → C:\path\test
+        let input = "\u{FF23}:\u{FF3C}\u{FF50}\u{FF41}\u{FF54}\u{FF48}\u{FF3C}\u{FF54}\u{FF45}\u{FF53}\u{FF54}";
+        let expected = "C:\\path\\test";
+        assert_eq!(normalize_input(input), expected);
+    }
+
+    #[test]
+    fn test_normalize_input_curly_quotes() {
+        // 智能引号 → 半角双引号
+        assert_eq!(normalize_input("\u{201C}hello\u{201D}"), "\"hello\"");
+        assert_eq!(normalize_input("\u{2018}hi\u{2019}"), "\"hi\"");
+    }
+
+    #[test]
+    fn test_interactive_setup_defaults() {
+        // 所有步骤留空 → 使用默认值
+        let input = b"\n\n\n\n"; // 4 行空输入
+        let mut reader = Cursor::new(input);
+        let result = interactive_setup_with(&mut reader);
+        assert_eq!(result, ExitCode::SUCCESS);
+
+        // 验证配置被写入且值为默认
+        let cfg = config::read_config();
+        assert_eq!(cfg.max_memory_mb, 1024);
+        assert_eq!(cfg.monitor_interval_sec, 10);
+        assert!(cfg.qwen_path.is_none());
+
+        // 清理：重置为备份
+        let orig = config::config_file_path();
+        let _ = std::fs::remove_file(&orig);
+    }
+
+    #[test]
+    fn test_interactive_setup_with_custom_values() {
+        // 提供自定义值（注意：qwen_path 需要真实路径才能通过验证）
+        // 只测试内存和监控间隔
+        let exe = std::env::current_exe().unwrap();
+        let exe_str = exe.to_string_lossy().to_string();
+        let input = format!("{}\n2048\n30\n\n", exe_str);
+        let mut reader = Cursor::new(input.as_bytes());
+        let result = interactive_setup_with(&mut reader);
+        assert_eq!(result, ExitCode::SUCCESS);
+
+        let cfg = config::read_config();
+        assert_eq!(cfg.max_memory_mb, 2048);
+        assert_eq!(cfg.monitor_interval_sec, 30);
+        assert_eq!(cfg.qwen_path, Some(exe_str));
+
+        let orig = config::config_file_path();
+        let _ = std::fs::remove_file(&orig);
+    }
+
+    #[test]
+    fn test_interactive_setup_invalid_memory_uses_default() {
+        // 输入无效内存值 → 使用默认值
+        let input = b"\ninvalid\n\n\n";
+        let mut reader = Cursor::new(input);
+        let result = interactive_setup_with(&mut reader);
+        assert_eq!(result, ExitCode::SUCCESS);
+
+        let cfg = config::read_config();
+        assert_eq!(cfg.max_memory_mb, 1024); // 默认值
+
+        let orig = config::config_file_path();
+        let _ = std::fs::remove_file(&orig);
+    }
+
+    #[test]
+    fn test_cmd_init_config_show() {
+        // --show 应返回 SUCCESS
+        let result = cmd_init_config(None, None, None, None, true);
+        assert_eq!(result, ExitCode::SUCCESS);
     }
 }

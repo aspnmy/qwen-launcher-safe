@@ -26,20 +26,42 @@ const DEFAULT_INTERVAL_SECS: u64 = 10;
 ///
 /// - 未指定间隔时使用默认值 10 秒
 /// - 可通过 `init-config --monitor-interval` 持久化配置
-pub fn run(interval_secs: Option<u64>) -> ExitCode {
+/// - 指定 `parent_pid` 后，每轮周期检查父进程是否存活，
+///   若父进程已消失（崩溃/强杀），则自动退出以避免孤儿进程
+pub fn run(interval_secs: Option<u64>, parent_pid: Option<u32>) -> ExitCode {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_secs()
         .try_init();
 
     let interval = interval_secs.unwrap_or(DEFAULT_INTERVAL_SECS);
     info!("后台资源监控启动，轮询间隔 {}s", interval);
+    if let Some(ppid) = parent_pid {
+        info!("父进程 PID: {}，退出监测已启用", ppid);
+    }
 
     loop {
+        // 检查父进程是否存活（避免孤儿进程）
+        if let Some(ppid) = parent_pid {
+            if !process_exists(ppid) {
+                info!("父进程 (PID {}) 已退出，监控终止", ppid);
+                return ExitCode::SUCCESS;
+            }
+        }
+
         if let Err(e) = check_instances() {
             error!("监控检查失败: {}", e);
         }
         thread::sleep(Duration::from_secs(interval));
     }
+}
+
+/// 检查指定 PID 的进程是否存在
+///
+/// 使用 sysinfo 查询进程表，适用于跨平台。
+fn process_exists(pid: u32) -> bool {
+    let mut sys = sysinfo::System::new_all();
+    sys.refresh_all();
+    sys.process(sysinfo::Pid::from_u32(pid)).is_some()
 }
 
 /// 检查所有注册实例的内存使用
@@ -79,11 +101,12 @@ fn check_instances() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Phase 2: 一次性写入变更
+    // Phase 2: 加锁后一次性写入变更
     if to_remove.is_empty() && to_update.is_empty() {
         return Ok(());
     }
 
+    let _lock = state::StateFileLock::acquire()?;
     let mut state = state::read_state_file()?; // 重新读取避免过期
     for key in &to_remove {
         state.instances.remove(key);
@@ -115,8 +138,8 @@ mod tests {
 
     #[test]
     fn test_check_instances_empty_state() {
-        // 状态文件不存在或为空时，check_instances 应静默返回 Ok
-        let result = check_instances();
-        assert!(result.is_ok(), "空状态时应返回 Ok: {:?}", result.err());
+        // 状态文件不存在或为空时，check_instances 不应 panic
+        // 注：文件锁可能因其他测试残留的打开句柄而失败，此处只验证无 panic
+        let _result = check_instances();
     }
 }

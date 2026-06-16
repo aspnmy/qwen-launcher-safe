@@ -19,8 +19,19 @@ use std::time::{Duration, Instant};
 
 use log::{error, info, warn};
 
+use crate::state::StateFile;
+
 /// Ctrl+C 触发时设为 true，主循环检测后触发优雅退出
 static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
+
+/// 子进程发现轮询超时（秒）
+const POLL_TIMEOUT_SECS: u64 = 5;
+/// 子进程发现轮询间隔（毫秒）
+const POLL_INTERVAL_MS: u64 = 300;
+/// 仪表盘刷新间隔（秒）
+const DASHBOARD_REFRESH_SECS: u64 = 2;
+/// 等待 Qwen 退出的最大时间（秒 = 24 小时）
+const MONITORED_PIDS_DEADLINE_SECS: u64 = 86400;
 
 use crate::config;
 use crate::process;
@@ -35,7 +46,11 @@ pub fn run(args: &[String]) -> ExitCode {
         .format_timestamp_secs()
         .try_init();
 
-    info!("Qwen Code 资源保护启动器 (Rust)");
+    let start_time = Instant::now();
+    info!(
+        "Qwen Code 资源保护启动器 (Rust) v{}",
+        env!("CARGO_PKG_VERSION")
+    );
 
     let qwen_cmd = match process::find_qwen_command() {
         Ok(cmd) => {
@@ -87,6 +102,13 @@ pub fn run(args: &[String]) -> ExitCode {
     };
 
     // 4. 注册实例 + 绑定 CPU
+
+    // 先清理之前崩溃残留的僵死实例
+    match state_file_lock_scope() {
+        Ok(mut state) => state::cleanup_stale_entries(&mut state),
+        Err(e) => warn!("清理僵死实例失败: {}", e),
+    }
+
     let registered_keys = match register_instances(&new_pids, cfg.max_memory_mb) {
         Ok(keys) => {
             info!("已注册 {} 个实例", keys.len());
@@ -115,6 +137,17 @@ pub fn run(args: &[String]) -> ExitCode {
         warn!("注册 Ctrl+C 处理器失败: {}", e);
     }
 
+    // Unix 上额外处理 SIGTERM 信号，避免 daemon kill 时无法清理
+    #[cfg(unix)]
+    {
+        extern "C" fn sigterm_handler(_sig: i32) {
+            SHOULD_EXIT.store(true, Ordering::SeqCst);
+        }
+        unsafe {
+            libc::signal(libc::SIGTERM, sigterm_handler as libc::sighandler_t);
+        }
+    }
+
     // 6. 等待 Qwen 退出
     info!("等待 Qwen 退出中...");
     let exit_code = wait_for_qwen(qwen_child, &monitored_qwen_pids);
@@ -122,16 +155,24 @@ pub fn run(args: &[String]) -> ExitCode {
     // 7. 清理
     cleanup(monitor_child, &registered_keys);
 
-    info!("Qwen Code 已退出 (code: {})", exit_code);
+    let uptime = start_time.elapsed();
+    info!(
+        "Qwen Code 已退出 (code: {}, uptime: {:.1}s)",
+        exit_code,
+        uptime.as_secs_f64()
+    );
     ExitCode::from(exit_code as u8)
 }
 
 /// 轮询发现新 Qwen 子进程
 ///
-/// 在 5 秒超时内以 300ms 间隔轮询系统进程表，
+/// 在 `POLL_TIMEOUT_SECS` 秒超时内以 `POLL_INTERVAL_MS` ms 间隔轮询系统进程表，
 /// 返回所有不在基线中的新 Qwen 相关进程 PID。
+///
+/// 每轮输出进度信息，避免用户无反馈。
 fn poll_new_qwen_processes(baseline: &HashSet<u32>) -> Vec<u32> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(POLL_TIMEOUT_SECS);
+    let mut tick = 0u32;
     loop {
         let mut sys = sysinfo::System::new_all();
         sys.refresh_all();
@@ -147,8 +188,26 @@ fn poll_new_qwen_processes(baseline: &HashSet<u32>) -> Vec<u32> {
         if Instant::now() >= deadline {
             return Vec::new();
         }
-        thread::sleep(Duration::from_millis(300));
+        tick += 1;
+        if tick.is_multiple_of(3) {
+            info!(
+                "仍在等待 Qwen 子进程启动... (已等待 {}s)",
+                tick * 300 / 1000
+            );
+        }
+        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
     }
+}
+
+/// 获取锁后执行僵死实例清理
+///
+/// 封装 read→cleanup→write 原子操作。
+fn state_file_lock_scope() -> io::Result<state::StateFile> {
+    let _lock = state::StateFileLock::acquire()?;
+    let mut state = state::read_state_file()?;
+    state::cleanup_stale_entries(&mut state);
+    state::write_state_file(&state)?;
+    Ok(state)
 }
 
 /// 从核心负载表中选择最优核心
@@ -172,6 +231,7 @@ fn select_best_core(phys_cores: u32, core_load: &HashMap<u32, u32>) -> u32 {
 /// 3. 为每个新 PID 分配最小空闲核心
 /// 4. 写入状态文件并调用 Windows API 绑定 CPU 亲和性
 fn register_instances(pids: &[u32], max_memory_mb: u64) -> io::Result<Vec<String>> {
+    let _lock = state::StateFileLock::acquire()?;
     let mut state = state::read_state_file()?;
     let phys_cores = process::get_processor_count();
     state.global_state.physical_cores = phys_cores;
@@ -198,8 +258,10 @@ fn register_instances(pids: &[u32], max_memory_mb: u64) -> io::Result<Vec<String
         *core_load.entry(core).or_insert(0) += 1;
 
         if was_shared {
-            warn!("核心不足，PID {} 共享核心 {}（共享后负载 {} 实例）",
-                pid, core, core_load[&core]);
+            warn!(
+                "核心不足，PID {} 共享核心 {}（共享后负载 {} 实例）",
+                pid, core, core_load[&core]
+            );
         }
 
         let priority = state.instances.len() as u32 + 1;
@@ -220,14 +282,18 @@ fn register_instances(pids: &[u32], max_memory_mb: u64) -> io::Result<Vec<String
 
 /// 生成后台监控子进程
 ///
-/// 以 `monitor --interval <秒>` 参数自生成一个子进程运行后台监控循环。
+/// 以 `monitor --interval <秒> --parent-pid <PID>` 参数自生成一个子进程运行后台监控循环。
+/// 传递父 PID 以便 monitor 在父进程崩溃时自动退出，避免孤儿进程。
 fn spawn_monitor(interval_sec: u64) -> io::Result<Child> {
     let exe = process::self_exe_path()?;
     let interval_str = interval_sec.to_string();
+    let parent_pid_str = std::process::id().to_string();
     let child = std::process::Command::new(&exe)
         .arg("monitor")
         .arg("--interval")
         .arg(&interval_str)
+        .arg("--parent-pid")
+        .arg(&parent_pid_str)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::inherit())
@@ -254,14 +320,14 @@ fn wait_for_qwen(mut child: Child, monitored_pids: &[u32]) -> i32 {
 
     // 轮询所有监控 PID，直到全部消亡
     info!("等待 {} 个 Qwen 进程退出...", monitored_pids.len());
-    let deadline = Instant::now() + Duration::from_secs(86400); // 24 小时兜底
+    let deadline = Instant::now() + Duration::from_secs(MONITORED_PIDS_DEADLINE_SECS);
     let total_mem_gb = {
         let mut sys = sysinfo::System::new_all();
         sys.refresh_memory();
         sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0)
     };
     loop {
-        thread::sleep(Duration::from_secs(2));
+        thread::sleep(Duration::from_secs(DASHBOARD_REFRESH_SECS));
 
         let mut sys = sysinfo::System::new_all();
         sys.refresh_all();
@@ -282,21 +348,34 @@ fn wait_for_qwen(mut child: Child, monitored_pids: &[u32]) -> i32 {
         }
 
         if Instant::now() >= deadline {
-            warn!("等待超时（24 小时），强制退出");
+            warn!("等待超时（24 小时），强制终止 Qwen 进程");
+            for pid in monitored_pids {
+                if let Some(process) = sys.process(sysinfo::Pid::from_u32(*pid)) {
+                    if !process.kill() {
+                        warn!("强制终止 PID {} 失败", pid);
+                    } else {
+                        info!("已强制终止 PID {}", pid);
+                    }
+                }
+            }
             return 1;
         }
 
-        // 读取共享状态，更新仪表盘
-        display_dashboard(monitored_pids, total_mem_gb, &sys);
+        // 读取共享状态，更新仪表盘（只读一次，避免重复 I/O）
+        let state_snapshot = crate::state::read_state_file().ok();
+        display_dashboard(monitored_pids, total_mem_gb, &sys, state_snapshot.as_ref());
     }
 }
 
 /// 显示实时资源仪表盘：CPU 核占用 + 内存使用
-fn display_dashboard(monitored_pids: &[u32], total_mem_gb: f64, sys: &sysinfo::System) {
-    // 使用回车回到行首，更新仪表盘区域
-    // 先读取共享状态
-    let state = crate::state::read_state_file().ok();
-
+///
+/// `state_opt`：可选的共享状态快照，传入时避免重复读取状态文件。
+fn display_dashboard(
+    monitored_pids: &[u32],
+    total_mem_gb: f64,
+    sys: &sysinfo::System,
+    state_opt: Option<&StateFile>,
+) {
     let mut output = String::new();
 
     // 清屏 + 光标归位
@@ -323,7 +402,7 @@ fn display_dashboard(monitored_pids: &[u32], total_mem_gb: f64, sys: &sysinfo::S
     ));
     output.push_str("  ------  ------  ---------  --------------  --------\n");
 
-    if let Some(ref state_file) = state {
+    if let Some(state_file) = state_opt {
         for pid in monitored_pids {
             let pkey = pid.to_string();
             if let Some(inst) = state_file.instances.get(&pkey) {
@@ -335,14 +414,9 @@ fn display_dashboard(monitored_pids: &[u32], total_mem_gb: f64, sys: &sysinfo::S
                     .join(",");
                 output.push_str(&format!(
                     "  {:<8}  {:<8}  {:<10}  {:<14}  {:<8}\n",
-                    pid,
-                    cores,
-                    inst.working_set_mb,
-                    inst.max_allowed_memory_mb,
-                    inst.state
+                    pid, cores, inst.working_set_mb, inst.max_allowed_memory_mb, inst.state
                 ));
             } else {
-                // 实例已注销但进程仍在监控列表中
                 output.push_str(&format!(
                     "  {:<8}  {:<8}  {:<10}  {:<14}  {:<8}\n",
                     pid, "-", "-", "-", "注销中"
@@ -376,6 +450,13 @@ fn cleanup(monitor_child: io::Result<Child>, registered_keys: &[String]) {
 
     // 注销实例
     if !registered_keys.is_empty() {
+        let _lock = match state::StateFileLock::acquire() {
+            Ok(l) => l,
+            Err(e) => {
+                warn!("获取状态文件锁失败: {}", e);
+                return;
+            }
+        };
         let mut state = match state::read_state_file() {
             Ok(s) => s,
             Err(e) => {

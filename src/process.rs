@@ -35,8 +35,8 @@ use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
-    GetProcessAffinityMask, OpenProcess, SetProcessAffinityMask,
-    PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
+    GetProcessAffinityMask, OpenProcess, SetProcessAffinityMask, PROCESS_QUERY_INFORMATION,
+    PROCESS_SET_INFORMATION,
 };
 
 use crate::config;
@@ -92,10 +92,11 @@ pub fn get_qwen_pids(sys: &sysinfo::System) -> HashSet<u32> {
 
 /// 获取系统逻辑处理器数量
 ///
-/// Windows 下使用 [`GetSystemInfo`] API 获取处理器数量。
-/// 注意：`dwNumberOfProcessors` 在启用超线程的系统上返回的是逻辑处理器数
-/// （通常是物理核心数的 2 倍），而非物理核心数。对 CPU 亲和性绑定而言，
-/// 逻辑处理器才是正确的分配粒度。
+/// - Windows: 使用 [`GetSystemInfo`] API 获取 `dwNumberOfProcessors`
+/// - Linux: 使用 `sysconf(_SC_NPROCESSORS_ONLN)` 获取在线处理器数
+///
+/// 注意：在启用超线程的系统上返回的是**逻辑处理器数**（通常是物理核心数的 2 倍），
+/// 而非物理核心数。对 CPU 亲和性绑定而言，逻辑处理器才是正确的分配粒度。
 #[cfg(windows)]
 pub fn get_processor_count() -> u32 {
     unsafe {
@@ -105,28 +106,39 @@ pub fn get_processor_count() -> u32 {
     }
 }
 
-/// 非 Windows 平台占位实现，返回 1
-#[cfg(not(windows))]
+/// Linux 下使用 `sysconf(_SC_NPROCESSORS_ONLN)` 获取在线逻辑处理器数
+#[cfg(target_os = "linux")]
+pub fn get_processor_count() -> u32 {
+    unsafe {
+        let n = libc::sysconf(libc::_SC_NPROCESSORS_ONLN);
+        if n > 0 {
+            n as u32
+        } else {
+            1
+        }
+    }
+}
+
+/// 其他平台（macOS/FreeBSD 等）占位实现，返回 1
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn get_processor_count() -> u32 {
     1
 }
 
 /// 将指定进程绑定到指定 CPU 核
 ///
-/// 使用 [`SetProcessAffinityMask`] API 设置进程的 CPU 亲和性掩码。
+/// - Windows: 使用 [`SetProcessAffinityMask`] API 设置进程的 CPU 亲和性掩码
+/// - Linux: 使用 `sched_setaffinity` 设置进程的 CPU 亲和性掩码
+///
 /// 掩码为 `1 << core_index`，即第 `core_index` 位为 1。
 ///
 /// # 平台限制
 ///
-/// 仅 Windows 平台有效。非 Windows 平台返回 `Ok(())`。
+/// macOS 和 FreeBSD 不支持 CPU 亲和性设置，返回 `Ok(())`（空操作）。
 #[cfg(windows)]
 pub fn bind_cpu_core(pid: u32, core_index: u32) -> io::Result<()> {
     unsafe {
-        let handle = OpenProcess(
-            PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION,
-            0,
-            pid,
-        );
+        let handle = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, 0, pid);
         if handle.is_null() {
             return Err(io::Error::last_os_error());
         }
@@ -179,17 +191,80 @@ pub fn bind_cpu_core(pid: u32, core_index: u32) -> io::Result<()> {
     }
 }
 
-/// 非 Windows 平台占位实现（空操作）
-#[cfg(not(windows))]
+/// Linux 下使用 `sched_setaffinity` 设置进程 CPU 亲和性
+#[cfg(target_os = "linux")]
+pub fn bind_cpu_core(pid: u32, core_index: u32) -> io::Result<()> {
+    unsafe {
+        let mut mask: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_SET(core_index as usize, &mut mask);
+        let ret = libc::sched_setaffinity(
+            pid as libc::pid_t,
+            std::mem::size_of::<libc::cpu_set_t>(),
+            &mask,
+        );
+        if ret == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+}
+
+/// 其他平台（macOS/FreeBSD 等）占位实现（空操作）
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn bind_cpu_core(_pid: u32, _core_index: u32) -> io::Result<()> {
     Ok(())
+}
+
+/// 验证路径是否为可执行文件
+///
+/// - 检查路径存在且为文件（非目录）
+/// - Windows: 检查 `.exe` / `.cmd` / `.bat` 扩展名
+/// - Unix: 检查文件是否具有执行权限位
+#[cfg(windows)]
+fn is_executable(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    match path.extension().and_then(|e| e.to_str()) {
+        Some(ext) => matches!(
+            ext.to_ascii_lowercase().as_str(),
+            "exe" | "cmd" | "bat" | "com"
+        ),
+        None => false,
+    }
+}
+
+/// Unix 下检查文件执行权限
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.is_file()
+        && path
+            .metadata()
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+}
+
+/// fallback：其他平台只检查是否为文件
+#[cfg(not(any(windows, unix)))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
 }
 
 /// 启动 Qwen 进程，继承当前控制台的 stdin/stdout/stderr
 ///
 /// `cwd` 为可选工作目录，设置后子进程在此目录下运行，
 /// 确保能找到该目录下的 `.qwen/skills/` 等配置。
+///
+/// 在启动前验证路径是有效的可执行文件，返回 `InvalidInput` 错误而非后续运行时失败。
 pub fn spawn_qwen(cmd: &Path, args: &[String], cwd: Option<&std::path::Path>) -> io::Result<Child> {
+    if !is_executable(cmd) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{:?} 不是有效的可执行文件", cmd),
+        ));
+    }
     let mut command = Command::new(cmd);
     command
         .args(args)
@@ -212,6 +287,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_is_executable_file_exists() {
+        // 当前 exe 本身应被检测为可执行
+        let exe = std::env::current_exe().unwrap();
+        assert!(is_executable(&exe), "当前 exe 应为可执行");
+    }
+
+    #[test]
+    fn test_is_executable_directory_not_executable() {
+        // 目录不应被判定为可执行
+        let dir = std::env::current_dir().unwrap();
+        assert!(!is_executable(&dir), "目录不应被判定为可执行");
+    }
+
+    #[test]
+    fn test_is_executable_nonexistent_path() {
+        let p = PathBuf::from(r"C:\nonexistent_file_12345.exe");
+        assert!(!is_executable(&p), "不存在的路径不应为可执行");
+    }
+
+    #[test]
+    fn test_spawn_qwen_invalid_path_returns_invalid_input() {
+        let invalid = PathBuf::from(r"C:\nonexistent_qwen_test.exe");
+        let result = spawn_qwen(&invalid, &[], None);
+        assert!(result.is_err(), "无效路径应返回错误");
+        assert_eq!(
+            result.unwrap_err().kind(),
+            io::ErrorKind::InvalidInput,
+            "应为 InvalidInput 错误"
+        );
+    }
+
+    #[test]
     fn test_is_qwen_process_matches_qwen() {
         let cmd = vec![
             "node.exe".into(),
@@ -224,20 +331,13 @@ mod tests {
 
     #[test]
     fn test_is_qwen_process_matches_coder_agent() {
-        let cmd = vec![
-            "node.exe".into(),
-            "coder-agent".into(),
-            "serve".into(),
-        ];
+        let cmd = vec!["node.exe".into(), "coder-agent".into(), "serve".into()];
         assert!(is_qwen_process(&cmd), "应匹配 coder-agent");
     }
 
     #[test]
     fn test_is_qwen_process_matches_cli_agent() {
-        let cmd = vec![
-            "node".into(),
-            "cli-agent".into(),
-        ];
+        let cmd = vec!["node".into(), "cli-agent".into()];
         assert!(is_qwen_process(&cmd), "应匹配 cli-agent");
     }
 

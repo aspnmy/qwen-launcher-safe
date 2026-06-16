@@ -12,36 +12,46 @@ src/
 │
 ├── config.rs     配置文件读写
 │                   路径：<exe>/config/config.json（便携式）
-│                   字段：qwenPath, maxMemoryMB, monitorIntervalSec
+│                   字段：qwenPath, maxMemoryMB, monitorIntervalSec, workingDir
 │                   函数：read_config(), write_config(), interactive_setup()
 │
 ├── launcher.rs   启动器主编排
 │                   7 步生命周期：
 │                   基线 → 启动 → 轮询 → 注册 → 监控 → 等待 → 清理
+│                   核心分配：HashMap 负载追踪空闲优先→负载最低
+│                   信号处理：Ctrl+C (ctrlc) + Unix SIGTERM (libc)
+│                   仪表盘：每 2s 实时刷新 CPU 核占用和内存使用
 │
 ├── monitor.rs    后台资源监控
-│                   循环：睡眠 → 读状态 → sysinfo 检测 → 写状态
-│                   两阶段设计：Phase 1 只读扫描，Phase 2 批量写入
+│                   循环：父进程存活检查 → 读状态 → sysinfo 检测 → 写状态
+│                   两阶段设计：Phase 1 只读扫描，Phase 2 加锁批量写入
+│                   孤儿进程防护：传递 parent_pid，父进程消失后自动退出
 │
-├── process.rs    Windows 进程工具
-│                   find_qwen_command(): 7 层降级搜索
-│                   get_qwen_pids():     命令行关键字匹配
-│                   bind_cpu_core():     SetProcessAffinityMask
+├── process.rs    跨平台进程工具
+│                   find_qwen_command(): 仅从 config.json qwenPath 读取（单层来源）
+│                   get_qwen_pids():     命令行关键字匹配 (regex)
+│                   bind_cpu_core():     SetProcessAffinityMask (Windows)
+│                                        sched_setaffinity (Linux)
+│                   is_executable():     路径可执行性校验（Windows 检查扩展名/Unix 检查权限位）
+│                   spawn_qwen():        启动前校验可执行性，非 exe/无权限时返回 InvalidInput
 │
 └── state.rs      共享状态文件
 │                   路径：%TEMP%\qwen-resource-state.json
 │                   与 PowerShell qwen-resource-monitor 技能兼容
 │                   类型：StateFile → { instances, globalState }
+│                   容错：JSON 尾部垃圾字符自动截断修复
+│                   文件锁：fs2::FileExt 排他锁守卫，跨进程 read→modify→write 原子保护
+│                   僵死清理：cleanup_stale_entries() 自动清理崩溃残留的实例记录
 ```
 
-## 搜索链路
+## 配置链路
 
-qwen 路径**仅**来自配置文件，无自动搜索。
+qwen 路径**仅**来自配置文件，单层来源，无自动搜索。
 
 ```
 find_qwen_command()
 │
-└─ config/config.json → qwenPath 字段（唯一来源）
+└─ config/config.json → qwenPath 字段（唯一来源，无降级自动搜索）
     ├─ 已设置且存在 → 返回该路径
     ├─ 已设置但不存在 → 返回 NotFound
     └─ 未设置 → 返回 NotFound（触发交互式向导）

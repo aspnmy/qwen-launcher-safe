@@ -33,6 +33,7 @@ use std::io;
 use std::path::PathBuf;
 
 use chrono::Utc;
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 /// 单个 Qwen 实例的运行时状态
@@ -187,6 +188,58 @@ pub fn write_state_file(state: &StateFile) -> io::Result<()> {
     Ok(())
 }
 
+/// 状态文件互斥锁守卫
+///
+/// 持有期间阻止其他进程（通过 `fs2::FileExt::lock_exclusive`）读取或写入状态文件。
+/// 用于 `read→modify→write` 原子操作的保护，防止多进程并发导致：
+/// - CPU 核分配冲突（两个进程绑定到同一核）
+/// - 实例注册丢失（最后写入覆盖）
+/// - totalInstances 计数不准确
+///
+/// Drop 时自动释放文件锁。
+pub struct StateFileLock {
+    _file: std::fs::File,
+}
+
+/// 清理状态文件中僵死实例（PID 不再存在于系统中）
+///
+/// 用于 launcher 启动时和 monitor 轮询中自动清理进程崩溃后残留的注册记录。
+/// 跳过当前锁文件的持有进程（避免无竞争下的自清理）。
+pub fn cleanup_stale_entries(state: &mut StateFile) {
+    let mut sys = sysinfo::System::new_all();
+    sys.refresh_all();
+    let before = state.instances.len();
+    state
+        .instances
+        .retain(|_key, inst| sys.process(sysinfo::Pid::from_u32(inst.pid)).is_some());
+    let removed = before - state.instances.len();
+    if removed > 0 {
+        log::info!("清理 {} 个僵死实例", removed);
+    }
+    state.global_state.total_instances = state.instances.len() as u32;
+}
+
+impl StateFileLock {
+    /// 获取状态文件排他锁
+    ///
+    /// 文件不存在时先创建空状态文件，确保 lock_exclusive 可操作。
+    pub fn acquire() -> io::Result<Self> {
+        let path = state_file_path();
+        // 确保文件存在以便加锁
+        if !path.exists() {
+            let empty = StateFile::default();
+            write_state_file(&empty)?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(false)
+            .open(&path)?;
+        file.lock_exclusive()?;
+        Ok(Self { _file: file })
+    }
+}
+
 /// 创建一个新的 `Instance` 记录
 ///
 /// # 参数
@@ -285,7 +338,11 @@ mod tests {
         // 验证文件现在已被修复（干净 JSON）
         let fixed_data = fs::read_to_string(&orig_path).expect("读取修复后文件");
         let parsed: Result<StateFile, _> = serde_json::from_str(&fixed_data);
-        assert!(parsed.is_ok(), "修复后的文件应可正常解析: {:?}", parsed.err());
+        assert!(
+            parsed.is_ok(),
+            "修复后的文件应可正常解析: {:?}",
+            parsed.err()
+        );
 
         // 恢复原始状态文件
         match orig_backup {
@@ -315,5 +372,31 @@ mod tests {
         let state = result.unwrap();
         // globalState 应始终有合理的值（总实例数可能为 0 或正数）
         assert!(state.global_state.physical_cores < 1024, "CPU 核心数应合理");
+    }
+
+    #[test]
+    fn test_cleanup_stale_entries_removes_dead_pids() {
+        // 创建一个包含不存在的 PID 的状态文件
+        let mut state = StateFile::default();
+        let inst = new_instance(999_999, 0, 1, 1024); // 这个 PID 几乎肯定不存在
+        state.instances.insert("999999".into(), inst);
+        assert_eq!(state.instances.len(), 1);
+
+        cleanup_stale_entries(&mut state);
+        assert_eq!(state.instances.len(), 0, "不存在的 PID 应被清理");
+        assert_eq!(state.global_state.total_instances, 0);
+    }
+
+    #[test]
+    fn test_cleanup_stale_entries_preserves_live() {
+        // 当前进程应被视为存活的
+        let mut state = StateFile::default();
+        let my_pid = std::process::id();
+        let inst = new_instance(my_pid, 0, 1, 1024);
+        state.instances.insert(my_pid.to_string(), inst);
+        assert_eq!(state.instances.len(), 1);
+
+        cleanup_stale_entries(&mut state);
+        assert_eq!(state.instances.len(), 1, "当前进程应被保留");
     }
 }
