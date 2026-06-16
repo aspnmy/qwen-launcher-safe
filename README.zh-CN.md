@@ -1,6 +1,7 @@
 # qwen-launcher-safe
 
 > **English version: [README.md](./README.md)**
+> **更多文档：[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**
 
 [qwen-launcher.ps1](https://github.com/aspnmy/qwen-coder) 的 Rust 重构版 — Qwen Code CLI 的资源保护启动包装器。
 
