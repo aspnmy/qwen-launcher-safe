@@ -11,9 +11,9 @@ src/
 │                   - InitConfig → cmd_init_config()
 │
 ├── config.rs     配置文件读写
-│                   路径：~/.qwen-launcher/config.json
+│                   路径：<exe>/config/config.json（便携式）
 │                   字段：qwenPath, maxMemoryMB, monitorIntervalSec
-│                   函数：read_config(), write_config()
+│                   函数：read_config(), write_config(), interactive_setup()
 │
 ├── launcher.rs   启动器主编排
 │                   7 步生命周期：
@@ -39,13 +39,13 @@ src/
 ```
 find_qwen_command()
 │
-├─ ① PATH 环境变量          qwen.cmd / qwen.exe / qwen
-├─ ② %APPDATA%\npm\         npm 全局 bin
-├─ ③ %LOCALAPPDATA%\qwen\bin\
-├─ ④ ~\.cherrystudio\bin\   原版硬编码备选
-├─ ⑤ %ProgramFiles%\qwen\bin\
-├─ ⑥ node_modules/.bin/…    从当前目录向上遍历
-├─ ⑦ ~\.qwen-launcher\      config.json 的 qwenPath 字段
+├─ ① %APPDATA%\npm\          稳定安装目录（npm 全局 bin）
+├─ ② %LOCALAPPDATA%\qwen\bin\...
+├─ ③ ~\.cherrystudio\bin\    原版硬编码备选
+├─ ④ %ProgramFiles%\qwen\bin\
+├─ ⑤ node_modules/.bin/…    从当前目录向上遍历
+├─ ⑥ PATH 环境变量           过滤 fnm/volta/nvm 临时包装器
+├─ ⑦ config/config.json      qwenPath 字段
 │
 └─ 全部失败 → io::Error::NotFound
 ```

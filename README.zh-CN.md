@@ -7,8 +7,10 @@
 
 ## 特性
 
-- **进程自动发现** — 自动搜索 `qwen` 命令，覆盖 PATH、npm/npx 全局安装位置、上级目录 `node_modules/.bin/` 链
-- **配置文件兜底** — 自动搜索失败时，读取 `~/.qwen-launcher/config.json` 中手动指定的 `qwenPath`
+- **进程自动发现** — 优先搜索稳定安装目录，再扫 PATH（过滤 fnm/volta/nvm 等临时包装器），然后向上遍历 `node_modules/.bin/`
+- **配置文件兜底** — 自动搜索失败时，读取可执行文件同级的 `config/config.json` 中手动指定的 `qwenPath`
+- **交互式配置向导** — 配置文件不存在时，`init`/`init-config` 无参数自动进入 3 步交互式向导（qwen 路径、内存限制、监控间隔）
+- **`init` 别名** — `init` 是 `init-config` 的快捷别名
 - **CPU 核绑定** — 每个 Qwen 实例获得独占物理 CPU 核，保证性能稳定性
 - **共享状态文件** — 实例注册表持久化在 `%TEMP%\qwen-resource-state.json`，与现有 PowerShell `qwen-resource-monitor` 技能兼容
 - **后台监控** — 自生成子进程 (`qwen-launcher-safe monitor`) 定时检查注册实例内存使用，清理已消失的 PID
@@ -40,9 +42,18 @@ qwen-launcher-safe launch -- --model qwen-max
 .\target\release\qwen-launcher-safe.exe launch --
 ```
 
-### 配置 qwen 路径
+### 配置 qwen 路径（交互式向导）
 
-自动搜索失败时，手动指定路径：
+配置文件不存在时，`init` 或 `init-config` 无参数自动进入交互模式：
+
+```powershell
+# 交互式配置（自动检测 qwen，提示输入内存/间隔）
+qwen-launcher-safe init
+```
+
+### 配置 qwen 路径（直接参数）
+
+自动搜索失败或想跳过向导时，使用直接选项：
 
 ```powershell
 # 自动检测并保存配置
@@ -86,18 +97,18 @@ src/
 ## qwen 搜索顺序
 
 ```
-① PATH 环境变量            (qwen.cmd / qwen.exe / qwen)
-② %APPDATA%\npm\           (npm 全局 bin)
-③ %LOCALAPPDATA%\qwen\bin\ (本地应用数据)
-④ ~\.cherrystudio\bin\     (原版 PowerShell 脚本备选路径)
-⑤ %ProgramFiles%\qwen\bin\ (Program Files)
-⑥ {cwd}/node_modules/.bin/… (向上遍历父目录)
-⑦ ~\.qwen-launcher\config.json 中的 qwenPath 字段
+① %APPDATA%\npm\           (npm 全局 bin — 稳定，无包装器)
+② %LOCALAPPDATA%\qwen\bin\ (本地应用数据)
+③ ~\.cherrystudio\bin\     (原版 PowerShell 脚本备选路径)
+④ %ProgramFiles%\qwen\bin\ (Program Files)
+⑤ {cwd}/node_modules/.bin/… (向上遍历父目录)
+⑥ PATH 环境变量             (过滤 fnm/volta/nvm 临时包装器)
+⑦ config/config.json        (配置文件中的 qwenPath 字段)
 ```
 
 ## 配置文件
 
-`~\.qwen-launcher\config.json`
+`<exe 目录>/config/config.json`（便携式 — 与可执行文件同级）
 
 ```json
 {

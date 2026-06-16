@@ -7,8 +7,10 @@ A Rust rewrite of the [qwen-launcher.ps1](https://github.com/aspnmy/qwen-coder) 
 
 ## Features
 
-- **Process Discovery** — Automatically searches for `qwen` command via PATH, common npm/npx global install locations, and parent-directory `node_modules/.bin/` chains.
-- **Config File Fallback** — If auto-search finds nothing, reads `~/.qwen-launcher/config.json` for a manually specified `qwenPath`.
+- **Process Discovery** — Automatically searches for `qwen` command in stable install directories first, then PATH (filtering out transient fnm/volta/nvm wrappers), then parent-directory `node_modules/.bin/` chains.
+- **Config File Fallback** — If auto-search finds nothing, reads `config/config.json` (alongside the executable) for a manually specified `qwenPath`.
+- **Interactive Setup Wizard** — When no config file exists, `init`/`init-config` without args enters a 3-step interactive wizard (qwen path, memory limit, monitor interval).
+- **`init` Alias** — `init` is a shortcut alias for `init-config`.
 - **CPU Core Binding** — Each Qwen instance gets an exclusive physical CPU core for consistent performance.
 - **Shared State File** — Instance registry persists at `%TEMP%\qwen-resource-state.json`, compatible with the existing PowerShell `qwen-resource-monitor` skill.
 - **Background Monitor** — A self-spawned child process (`qwen-launcher-safe monitor`) periodically checks registered instances' memory usage and cleans up vanished PIDs.
@@ -40,9 +42,18 @@ qwen-launcher-safe launch -- --model qwen-max
 .\target\release\qwen-launcher-safe.exe launch --
 ```
 
-### Configure qwen path
+### Configure qwen path (interactive wizard)
 
-If auto-search fails, manually specify the path:
+When no config file exists, `init` or `init-config` without args enters interactive mode:
+
+```powershell
+# Interactive setup (auto-detects qwen, prompts for memory/interval)
+qwen-launcher-safe init
+```
+
+### Configure qwen path (direct args)
+
+If auto-search fails or you want to skip the wizard, use direct options:
 
 ```powershell
 # Auto-detect and save to config
@@ -86,18 +97,18 @@ src/
 ## Search Order for `qwen`
 
 ```
-① PATH environment variable (qwen.cmd / qwen.exe / qwen)
-② %APPDATA%\npm\              (npm global bin)
-③ %LOCALAPPDATA%\qwen\bin\     (local app data)
-④ ~\.cherrystudio\bin\         (original fallback from PowerShell script)
-⑤ %ProgramFiles%\qwen\bin\     (Program Files)
-⑥ {cwd}/node_modules/.bin/...  (walk up parent directories)
-⑦ ~\.qwen-launcher\config.json (manual config file, qwenPath field)
+① %APPDATA%\npm\              (npm global bin — stable, no wrappers)
+② %LOCALAPPDATA%\qwen\bin\     (local app data)
+③ ~\.cherrystudio\bin\         (original fallback from PowerShell script)
+④ %ProgramFiles%\qwen\bin\     (Program Files)
+⑤ {cwd}/node_modules/.bin/...  (walk up parent directories)
+⑥ PATH environment variable    (fnm/volta/nvm transient wrappers filtered out)
+⑦ config/config.json           (manual config file, qwenPath field)
 ```
 
 ## Config File
 
-`~\.qwen-launcher\config.json`
+`<exe-dir>/config/config.json` (portable — alongside the executable)
 
 ```json
 {
