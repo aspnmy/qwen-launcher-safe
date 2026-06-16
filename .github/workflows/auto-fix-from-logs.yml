@@ -1,0 +1,181 @@
+# Actions Auto Fix — CI 日志驱动的自动代码修复
+#
+# 监听 CI/Check/Test/Release 工作流的失败事件，
+# 自动执行 clippy --fix / cargo fmt / eslint --fix 等修复，
+# 有修复时创建 PR，无修复时创建 Issue 供人工介入。
+#
+# 部署方式：复制到目标项目的 .github/workflows/ 目录
+#
+# 触发条件：
+#   - .github/workflows/ 中必须有一个 name 含 "CI" 或 "Check" 等工作流
+#   - 需要 GITHUB_TOKEN 具有 contents:write + pull-requests:write 权限
+
+name: 'Auto Fix from CI Logs'
+run-name: 'Auto-fix: ${{ github.event.workflow_run.name }} #${{ github.event.workflow_run.run_number }}'
+
+on:
+  workflow_run:
+    workflows:
+      - 'CI'
+      - 'Check'
+      - 'Test'
+      - 'Release'
+    types:
+      - completed
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  auto-fix:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      # ── 准备语言工具链（按需启用） ──
+      - name: Setup Rust
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Setup Node.js
+        if: ${{ hashFiles('package.json') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Python
+        if: ${{ hashFiles('requirements.txt', 'pyproject.toml', 'setup.py') != '' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ── 下载失败运行日志 ──
+      - name: Download failed run logs
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+        continue-on-error: true
+
+      - name: Compile error report
+        run: |
+          {
+            echo '## CI Failure Analysis'
+            echo ''
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Workflow | ${{ github.event.workflow_run.name }} |"
+            echo "| Run # | ${{ github.event.workflow_run.run_number }} |"
+            echo "| Commit | \`${{ github.event.workflow_run.head_sha }}\` |"
+            echo "| Branch | \`${{ github.event.workflow_run.head_branch }}\` |"
+            echo "| URL | ${{ github.event.workflow_run.html_url }} |"
+            echo ''
+          } > /tmp/error-report.md
+
+      # ── 应用自动修复 ──
+      - name: Rust auto-fix (clippy + fmt)
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        run: |
+          cargo clippy --fix --allow-dirty --allow-staged 2>&1 || true
+          cargo fmt 2>&1 || true
+
+      - name: JS/TS auto-fix (eslint)
+        if: ${{ hashFiles('package.json') != '' }}
+        run: |
+          npx eslint --fix --quiet . 2>&1 || true
+
+      - name: Python auto-fix (ruff)
+        if: ${{ hashFiles('pyproject.toml', 'setup.py', 'requirements.txt') != '' }}
+        run: |
+          pip install ruff -q 2>&1 || true
+          ruff check --fix . 2>&1 || true
+
+      - name: Go auto-fix (gofmt)
+        if: ${{ hashFiles('go.mod', 'go.sum') != '' }}
+        run: |
+          gofmt -l -w . 2>&1 || true
+
+      # ── 检查是否有变更 ──
+      - name: Check for fixes
+        id: check-fixes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "fixes_applied=true" >> "$GITHUB_OUTPUT"
+            echo "changed_files<<EOF" >> "$GITHUB_OUTPUT"
+            git status --short >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "fixes_applied=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── 有修复 → 创建 PR ──
+      - name: Create auto-fix PR
+        if: steps.check-fixes.outputs.fixes_applied == 'true'
+        run: |
+          BRANCH="auto-fix/run-${{ github.event.workflow_run.id }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "auto-fix: apply fixes from CI failure
+
+          Automated fix triggered by failed workflow run #${{ github.event.workflow_run.id }}
+          - Workflow: ${{ github.event.workflow_run.name }}
+          - Commit: ${{ github.event.workflow_run.head_sha }}
+          - Branch: ${{ github.event.workflow_run.head_branch }}"
+          git push origin "$BRANCH"
+          # 检查是否已有同名 PR
+          EXISTING=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null)
+          if [ -z "$EXISTING" ]; then
+            gh pr create \
+              --base "${{ github.event.workflow_run.head_branch }}" \
+              --head "$BRANCH" \
+              --title "auto-fix: CI fixes (triggered by run #${{ github.event.workflow_run.id }})" \
+              --body "Automated fix after **${{ github.event.workflow_run.name }}** failure.
+
+            Run: ${{ github.event.workflow_run.html_url }}
+            Commit: ${{ github.event.workflow_run.head_sha }}
+
+            ### Applied fixes
+            \`\`\`
+            $(git diff --stat)
+            \`\`\`
+            " \
+              --label "auto-fix" 2>&1
+          else
+            echo "PR #$EXISTING already exists for branch $BRANCH, skipping."
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 无自动修复 → 创建 Issue ──
+      - name: Create error issue (no auto-fix found)
+        if: steps.check-fixes.outputs.fixes_applied == 'false'
+        run: |
+          cat /tmp/error-report.md > /tmp/issue-body.md
+          {
+            echo 'No automatic fixes were possible for this failure.'
+            echo ''
+            echo '### Manual investigation needed'
+            echo "1. Review the failed run: [${{ github.event.workflow_run.name }} #${{ github.event.workflow_run.run_number }}](${{ github.event.workflow_run.html_url }})"
+            echo '2. Identify the root cause from the error logs'
+            echo '3. Apply the fix and push to the same branch'
+            echo ''
+            echo '---'
+            echo '_Generated by auto-fix-from-logs workflow_'
+          } >> /tmp/issue-body.md
+          gh issue create \
+            --title "CI Failure: ${{ github.event.workflow_run.name }} (run #${{ github.event.workflow_run.run_number }})" \
+            --body-file /tmp/issue-body.md \
+            --label "bug" --label "auto-fix" 2>&1 || \
+            echo "Issue creation skipped (may already exist)."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
