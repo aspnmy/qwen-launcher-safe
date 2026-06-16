@@ -108,6 +108,29 @@ src/
 
 `%TEMP%\qwen-resource-state.json` — shared with the existing PowerShell `qwen-resource-monitor` skill for multi-instance coordination.
 
+## Release
+
+This project uses a GitHub Actions release workflow (`.github/workflows/release.yml`) that builds for 6 target platforms on tag push.
+
+### Trigger a Release
+
+```bash
+# Ensure Cargo.toml version is bumped, then:
+git tag v$(grep '^version' Cargo.toml | head -1 | sed -E 's/version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')
+git push origin v$(grep '^version' Cargo.toml | head -1 | sed -E 's/version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')
+```
+
+### Build Matrix
+
+| OS | Target | Archive |
+|----|--------|---------|
+| ubuntu-latest | x86_64-unknown-linux-gnu | tar.gz |
+| ubuntu-latest | x86_64-unknown-linux-musl | tar.gz |
+| ubuntu-latest | aarch64-unknown-linux-gnu | tar.gz |
+| macos-latest | x86_64-apple-darwin | tar.gz |
+| macos-latest | aarch64-apple-darwin | tar.gz |
+| windows-latest | x86_64-pc-windows-msvc | zip |
+
 ## License
 
 MIT

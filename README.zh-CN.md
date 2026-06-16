@@ -108,6 +108,29 @@ src/
 
 `%TEMP%\qwen-resource-state.json` — 与现有 PowerShell `qwen-resource-monitor` 技能共享，实现多实例协调。
 
+## 发布
+
+项目使用 GitHub Actions 发布工作流 (`.github/workflows/release.yml`) ，推送 tag 时自动构建 6 个目标平台。
+
+### 触发发布
+
+```bash
+# 确保 Cargo.toml 版本号已更新，然后：
+git tag v$(grep '^version' Cargo.toml | head -1 | sed -E 's/version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')
+git push origin v$(grep '^version' Cargo.toml | head -1 | sed -E 's/version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')
+```
+
+### 构建矩阵
+
+| 系统 | 目标平台 | 打包格式 |
+|------|---------|---------|
+| ubuntu-latest | x86_64-unknown-linux-gnu | tar.gz |
+| ubuntu-latest | x86_64-unknown-linux-musl | tar.gz |
+| ubuntu-latest | aarch64-unknown-linux-gnu | tar.gz |
+| macos-latest | x86_64-apple-darwin | tar.gz |
+| macos-latest | aarch64-apple-darwin | tar.gz |
+| windows-latest | x86_64-pc-windows-msvc | zip |
+
 ## 许可证
 
 MIT
