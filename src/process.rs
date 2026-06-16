@@ -42,7 +42,7 @@ const SEARCH_CANDIDATES: &[&str] = &[
 /// 1. `PATH` 环境变量（`qwen.cmd` / `qwen.exe` / `qwen`）
 /// 2. 常见全局安装位置（npm / localappdata 等）
 /// 3. 当前目录向上遍历 `node_modules/.bin/`
-/// 4. 配置文件 `~/.qwen-launcher/config.json` 中的 `qwenPath`
+/// 4. 配置文件 `<exe 同级>/config/config.json` 中的 `qwenPath`
 ///
 /// 全部失败时返回 [`io::ErrorKind::NotFound`]。
 pub fn find_qwen_command() -> io::Result<PathBuf> {
@@ -72,22 +72,34 @@ pub fn find_qwen_command() -> io::Result<PathBuf> {
     ))
 }
 
-/// 自动搜索 qwen（PATH → 常见位置 → node_modules/.bin）
-fn auto_search() -> Option<PathBuf> {
-    // 1. PATH 搜索（尝试所有候选名）
-    for name in SEARCH_CANDIDATES {
-        if let Ok(path) = which(name) {
-            return Some(path);
-        }
-    }
+/// 判断路径是否为临时/转发的包装器（fnm、volta、nvm 等）
+fn is_transient_wrapper(path: &std::path::Path) -> bool {
+    let s = path.to_string_lossy().to_lowercase();
+    s.contains("fnm_multishells")
+        || s.contains("fnm\\multishells")
+        || s.contains("volta")
+        || s.contains("\\.nvm\\")
+        || s.contains("_nvm\\")
+}
 
-    // 2. 常见全局安装位置
+/// 自动搜索 qwen（稳定目录优先，排除临时包装器）
+fn auto_search() -> Option<PathBuf> {
+    // 1. 常见全局安装位置（稳定，优先使用）
     let common_dirs = common_search_dirs();
     for dir in &common_dirs {
         for name in SEARCH_CANDIDATES {
             let candidate = dir.join(name);
             if candidate.exists() {
                 return Some(candidate);
+            }
+        }
+    }
+
+    // 2. PATH 搜索（过滤掉 fnm/volta/nvm 等临时包装器路径）
+    for name in SEARCH_CANDIDATES {
+        if let Ok(path) = which(name) {
+            if !is_transient_wrapper(&path) {
+                return Some(path);
             }
         }
     }
