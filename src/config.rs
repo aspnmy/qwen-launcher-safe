@@ -1,4 +1,19 @@
-/// 配置文件读写 — `~\.qwen-launcher\config.json`
+//! 配置文件读写模块
+//!
+//! 管理 `~/.qwen-launcher/config.json` 的读取和写入。
+//! 配置文件用于指定 qwen 路径、内存限制和监控间隔，
+//! 在自动搜索失败时提供兜底方案。
+//!
+//! # 配置文件格式
+//!
+//! ```json
+//! {
+//!   "qwenPath": "C:\\Users\\user\\.cherrystudio\\bin\\qwen.exe",
+//!   "maxMemoryMB": 1024,
+//!   "monitorIntervalSec": 10
+//! }
+//! ```
+
 use std::io;
 use std::path::PathBuf;
 
@@ -37,7 +52,7 @@ impl Default for LauncherConfig {
     }
 }
 
-/// 配置文件目录：`~\.qwen-launcher\`
+/// 返回配置文件目录：`~/.qwen-launcher/`
 pub fn config_dir() -> PathBuf {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
@@ -45,12 +60,12 @@ pub fn config_dir() -> PathBuf {
     PathBuf::from(home).join(".qwen-launcher")
 }
 
-/// 配置文件路径：`~\.qwen-launcher\config.json`
+/// 返回配置文件路径：`~/.qwen-launcher/config.json`
 pub fn config_file_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
-/// 读取配置文件，不存在则返回 Default
+/// 读取配置文件，文件不存在时返回 [`LauncherConfig::default`]
 pub fn read_config() -> LauncherConfig {
     let path = config_file_path();
     if !path.exists() {
@@ -63,7 +78,7 @@ pub fn read_config() -> LauncherConfig {
     serde_json::from_str(&data).unwrap_or_default()
 }
 
-/// 写入配置文件（当用户在 CLI 中指定 `--config-init` 时使用）
+/// 写入配置文件（当用户在 CLI 中指定 `init-config` 时调用）
 pub fn write_config(config: &LauncherConfig) -> io::Result<()> {
     let dir = config_dir();
     std::fs::create_dir_all(&dir)?;

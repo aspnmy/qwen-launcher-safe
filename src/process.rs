@@ -1,4 +1,17 @@
-/// Windows 进程工具 — 进程发现、命令查找、CPU 核绑定
+//! Windows 进程工具模块
+//!
+//! 提供跨平台（Windows 为主）的进程管理功能：
+//!
+//! - **qwen 命令发现**：PATH → 常见安装位置 → 节点模块 → 配置文件兜底
+//! - **Qwen 进程检测**：通过命令行关键字匹配识别 Qwen 相关 node 进程
+//! - **CPU 核绑定**：Windows 专属 API，将进程绑定到指定物理核心
+//! - **进程启动**：继承当前控制台启动子进程
+//!
+//! # 平台兼容性
+//!
+//! `bind_cpu_core` 和 `get_physical_core_count` 使用 `#[cfg(windows)]` 条件编译，
+//! 非 Windows 平台返回空操作或默认值 1。
+
 use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;
@@ -16,20 +29,22 @@ use windows_sys::Win32::System::Threading::{
 
 use crate::config;
 
-/// 搜索 qwen 命令的搜索路径（共 9 个备选）
+/// 搜索 qwen 命令的候选名称列表
 const SEARCH_CANDIDATES: &[&str] = &[
     "qwen.cmd", // npm global bin
     "qwen.exe", // standalone exe
     "qwen",     // Unix / PATH without .exe
 ];
 
-/// 查找 qwen 命令 — 先自动搜索，再读 .config 配置
+/// 查找 qwen 命令
 ///
-/// 搜索顺序：
-///   1. PATH 环境变量（找 qwen.cmd / qwen.exe / qwen）
-///   2. 常见全局安装位置（npm / localappdata / homebrew 等）
-///   3. 当前目录及其父目录的 node_modules/.bin/
-///   4. 配置文件中手动指定的路径 `~\.qwen-launcher\config.json`
+/// 搜索优先级：
+/// 1. `PATH` 环境变量（`qwen.cmd` / `qwen.exe` / `qwen`）
+/// 2. 常见全局安装位置（npm / localappdata 等）
+/// 3. 当前目录向上遍历 `node_modules/.bin/`
+/// 4. 配置文件 `~/.qwen-launcher/config.json` 中的 `qwenPath`
+///
+/// 全部失败时返回 [`io::ErrorKind::NotFound`]。
 pub fn find_qwen_command() -> io::Result<PathBuf> {
     // ── 链路 A：自动搜索 ──
     let auto = auto_search();
@@ -47,7 +62,6 @@ pub fn find_qwen_command() -> io::Result<PathBuf> {
             return Ok(path);
         }
         log::warn!("配置文件指定路径 {:?} 不存在，将在创建后写入", path);
-        // 配置指定但文件不存在 → 跳过，后续报错
     }
 
     // ── 全部失败 ──
@@ -96,7 +110,7 @@ fn auto_search() -> Option<PathBuf> {
     None
 }
 
-/// 常见全局安装目录列表
+/// 返回常见全局安装目录列表
 fn common_search_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
@@ -123,7 +137,7 @@ fn common_search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// 查找 PATH 中的可执行文件（简化版 which）
+/// 在 `PATH` 中查找可执行文件（简化版 which）
 fn which(name: &str) -> io::Result<PathBuf> {
     let path_vals = std::env::var_os("PATH").unwrap_or_default();
     for dir in std::env::split_paths(&path_vals) {
@@ -135,18 +149,23 @@ fn which(name: &str) -> io::Result<PathBuf> {
     Err(io::Error::new(io::ErrorKind::NotFound, "不在 PATH 中"))
 }
 
-/// 检测是否为 Qwen 相关进程（匹配命令行）
+/// 检测是否为 Qwen 相关进程
+///
+/// 通过匹配命令行中是否包含 `qwen`、`coder-agent` 或 `cli-agent` 关键字
+/// （大小写不敏感）来识别 Qwen 相关的 node 进程。
 fn is_qwen_process(cmdline: &[String]) -> bool {
     let joined = cmdline.join(" ");
     if joined.is_empty() {
         return false;
     }
-    // 匹配 qwen|coder-agent|cli-agent
     let re = Regex::new(r"(?i)qwen|coder-agent|cli-agent").unwrap();
     re.is_match(&joined)
 }
 
-/// 获取当前所有 Qwen 相关进程的 PID 集合
+/// 返回当前所有 Qwen 相关进程的 PID 集合
+///
+/// 遍历系统进程表，对每个进程调用 [`is_qwen_process`] 检测命令行，
+/// 收集匹配的进程 ID。
 pub fn get_qwen_pids(sys: &sysinfo::System) -> HashSet<u32> {
     let mut pids = HashSet::new();
     for process in sys.processes().values() {
@@ -159,6 +178,8 @@ pub fn get_qwen_pids(sys: &sysinfo::System) -> HashSet<u32> {
 }
 
 /// 获取物理 CPU 核心数
+///
+/// Windows 下使用 [`GetSystemInfo`] API 获取处理器数量。
 #[cfg(windows)]
 pub fn get_physical_core_count() -> u32 {
     unsafe {
@@ -168,13 +189,20 @@ pub fn get_physical_core_count() -> u32 {
     }
 }
 
-/// 没有 cfg(windows) 时的占位
+/// 非 Windows 平台占位实现，返回 1
 #[cfg(not(windows))]
 pub fn get_physical_core_count() -> u32 {
     1
 }
 
-/// 绑定进程到指定 CPU 核
+/// 将指定进程绑定到指定 CPU 核
+///
+/// 使用 [`SetProcessAffinityMask`] API 设置进程的 CPU 亲和性掩码。
+/// 掩码为 `1 << core_index`，即第 `core_index` 位为 1。
+///
+/// # 平台限制
+///
+/// 仅 Windows 平台有效。非 Windows 平台返回 `Ok(())`。
 #[cfg(windows)]
 pub fn bind_cpu_core(pid: u32, core_index: u32) -> io::Result<()> {
     unsafe {
@@ -192,13 +220,13 @@ pub fn bind_cpu_core(pid: u32, core_index: u32) -> io::Result<()> {
     Ok(())
 }
 
-/// 非 Windows 占位
+/// 非 Windows 平台占位实现（空操作）
 #[cfg(not(windows))]
 pub fn bind_cpu_core(_pid: u32, _core_index: u32) -> io::Result<()> {
     Ok(())
 }
 
-/// 启动 Qwen 进程（继承当前控制台）
+/// 启动 Qwen 进程，继承当前控制台的 stdin/stdout/stderr
 pub fn spawn_qwen(cmd: &PathBuf, args: &[String]) -> io::Result<Child> {
     Command::new(cmd)
         .args(args)
@@ -208,7 +236,7 @@ pub fn spawn_qwen(cmd: &PathBuf, args: &[String]) -> io::Result<Child> {
         .spawn()
 }
 
-/// 查找当前可执行文件路径（用于自调用 spawn monitor）
+/// 返回当前可执行文件路径（用于自调用生成 monitor 子进程）
 pub fn self_exe_path() -> io::Result<PathBuf> {
     std::env::current_exe()
 }

@@ -1,3 +1,23 @@
+//! Qwen Code 资源保护启动器 — CLI 入口和子命令分发
+//!
+//! 提供三个子命令：
+//! - `launch` — 启动 Qwen 并自动注册资源监控
+//! - `monitor` — 后台资源监控循环
+//! - `init-config` — 初始化或更新配置文件
+//!
+//! # 使用示例
+//!
+//! ```bash
+//! # 启动 Qwen 并传递参数
+//! qwen-launcher-safe launch -- --model qwen-max
+//!
+//! # 配置 qwen 路径
+//! qwen-launcher-safe init-config --qwen-path auto
+//!
+//! # 查看配置
+//! qwen-launcher-safe init-config --show
+//! ```
+
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -14,7 +34,7 @@ mod state;
 enum Cli {
     /// 启动 Qwen 并自动注册资源监控
     Launch {
-        /// Qwen 额外参数（透传给 qwen 命令）
+        /// Qwen 额外参数，透传给 qwen 命令（支持连字符参数）
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         qwen_args: Vec<String>,
     },
@@ -26,7 +46,7 @@ enum Cli {
     },
     /// 初始化或更新 .config 配置文件
     InitConfig {
-        /// qwen 可执行文件路径
+        /// qwen 可执行文件路径，传 "auto" 自动搜索
         #[arg(long)]
         qwen_path: Option<String>,
         /// 最大内存限制（MB）
@@ -41,6 +61,9 @@ enum Cli {
     },
 }
 
+/// 程序入口
+///
+/// 解析 CLI 参数后分发到对应子命令处理函数。
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli {
@@ -55,6 +78,14 @@ fn main() -> ExitCode {
     }
 }
 
+/// 处理 `init-config` 子命令
+///
+/// 支持以下操作：
+/// - `--show`：显示当前配置
+/// - `--qwen-path auto`：自动搜索并写入
+/// - `--qwen-path <路径>`：手动指定路径
+/// - `--max-memory-mb <MB>`：调整内存限制
+/// - `--monitor-interval <秒>`：调整轮询间隔
 fn cmd_init_config(
     qwen_path: Option<String>,
     max_memory_mb: Option<u64>,

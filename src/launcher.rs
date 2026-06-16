@@ -1,4 +1,15 @@
-/// 启动器主编排 — 监控生命周期管理
+//! 启动器主编排模块
+//!
+//! 实现完整的 Qwen 启动生命周期：
+//!
+//! 1. **基线记录** — 记录启动前的 Qwen 进程池
+//! 2. **非阻塞启动** — 启动 Qwen 进程但不阻塞当前线程
+//! 3. **子进程发现** — 轮询 5 秒检测新产生的 Qwen 子进程
+//! 4. **注册与绑定** — 向共享状态文件注册实例并绑定独占 CPU 核
+//! 5. **后台监控** — 自生成 `monitor` 子进程定期检查内存
+//! 6. **等待退出** — 阻塞等待 Qwen 主进程退出
+//! 7. **清理** — 停止监控并注销所有已注册实例
+
 use std::collections::HashSet;
 use std::io;
 use std::process::{Child, ExitCode};
@@ -11,7 +22,10 @@ use crate::config;
 use crate::process;
 use crate::state;
 
-/// 执行启动流程
+/// 执行完整的启动流程
+///
+/// 接收透传给 qwen 命令的参数数组，
+/// 返回进程退出码。
 pub fn run(args: &[String]) -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_secs()
@@ -93,7 +107,10 @@ pub fn run(args: &[String]) -> ExitCode {
     ExitCode::from(exit_code as u8)
 }
 
-/// 轮询发现新 Qwen 子进程（5 秒超时，300ms 间隔）
+/// 轮询发现新 Qwen 子进程
+///
+/// 在 5 秒超时内以 300ms 间隔轮询系统进程表，
+/// 返回所有不在基线中的新 Qwen 相关进程 PID。
 fn poll_new_qwen_processes(baseline: &HashSet<u32>) -> Vec<u32> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -115,7 +132,12 @@ fn poll_new_qwen_processes(baseline: &HashSet<u32>) -> Vec<u32> {
     }
 }
 
-/// 注册实例到共享状态并绑定 CPU
+/// 向共享状态文件注册实例并绑定 CPU 核
+///
+/// 1. 读取共享状态文件
+/// 2. 收集已占用核心（避免多实例冲突）
+/// 3. 为每个新 PID 分配最小空闲核心
+/// 4. 写入状态文件并调用 Windows API 绑定 CPU 亲和性
 fn register_instances(pids: &[u32]) -> io::Result<Vec<String>> {
     let mut state = state::read_state_file()?;
     let phys_cores = process::get_physical_core_count();
@@ -165,6 +187,9 @@ fn register_instances(pids: &[u32]) -> io::Result<Vec<String>> {
 }
 
 /// 生成后台监控子进程
+///
+/// 读取配置文件中的监控间隔，以 `monitor --interval <秒>` 参数
+/// 自生成一个子进程运行后台监控循环。
 fn spawn_monitor() -> io::Result<Child> {
     let exe = process::self_exe_path()?;
     let cfg = config::read_config();
@@ -180,9 +205,8 @@ fn spawn_monitor() -> io::Result<Child> {
     Ok(child)
 }
 
-/// 等待 Qwen 进程退出
+/// 等待 Qwen 主进程退出并返回退出码
 fn wait_for_qwen(mut child: Child, _monitored_pids: &[u32]) -> i32 {
-    // 等待主进程
     let exit_status = child.wait();
     match exit_status {
         Ok(status) => status.code().unwrap_or(0),
@@ -193,7 +217,7 @@ fn wait_for_qwen(mut child: Child, _monitored_pids: &[u32]) -> i32 {
     }
 }
 
-/// 清理：停止监控 + 注销实例
+/// 清理：停止监控子进程 + 从共享状态注销实例
 fn cleanup(monitor_child: io::Result<Child>, registered_keys: &[String]) {
     // 停止监控
     if let Ok(mut child) = monitor_child {

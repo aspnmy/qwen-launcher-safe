@@ -1,4 +1,14 @@
-/// 后台资源监控循环 — 每 N 秒检查注册实例的内存使用
+//! 后台资源监控循环模块
+//!
+//! 由 `launch` 子命令自动生成的子进程运行，亦支持独立启动。
+//!
+//! 监控逻辑：
+//! 1. 按固定间隔轮询读取共享状态文件
+//! 2. 用 `sysinfo` 查询每个注册实例的内存使用（RSS）
+//! 3. 更新状态文件中的 `workingSetMB` 和 `lastHeartbeat`
+//! 4. 对内存超限的实例输出告警日志
+//! 5. 对已消失的进程从状态文件中自动清理
+
 use std::process::ExitCode;
 use std::thread;
 use std::time::Duration;
@@ -11,6 +21,11 @@ use crate::state;
 const DEFAULT_INTERVAL_SECS: u64 = 10;
 
 /// 启动监控循环
+///
+/// 持续运行直到进程被外部终止（由 `launch` 子命令在清理阶段 kill）。
+///
+/// - 未指定间隔时使用默认值 10 秒
+/// - 可通过 `init-config --monitor-interval` 持久化配置
 pub fn run(interval_secs: Option<u64>) -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_secs()
@@ -28,6 +43,10 @@ pub fn run(interval_secs: Option<u64>) -> ExitCode {
 }
 
 /// 检查所有注册实例的内存使用
+///
+/// 采用两阶段设计避免借用检查冲突：
+/// - **Phase 1（只读扫描）**：收集待删除和待更新的键值对
+/// - **Phase 2（批量写入）**：重新读取状态文件，一次性写入所有变更
 fn check_instances() -> Result<(), Box<dyn std::error::Error>> {
     let state = state::read_state_file()?;
     if state.instances.is_empty() {
