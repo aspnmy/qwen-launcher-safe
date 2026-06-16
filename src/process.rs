@@ -35,8 +35,8 @@ use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
-    GetProcessAffinityMask, OpenProcess, SetProcessAffinityMask,
-    PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
+    GetProcessAffinityMask, OpenProcess, SetProcessAffinityMask, PROCESS_QUERY_INFORMATION,
+    PROCESS_SET_INFORMATION,
 };
 
 use crate::config;
@@ -122,11 +122,7 @@ pub fn get_processor_count() -> u32 {
 #[cfg(windows)]
 pub fn bind_cpu_core(pid: u32, core_index: u32) -> io::Result<()> {
     unsafe {
-        let handle = OpenProcess(
-            PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION,
-            0,
-            pid,
-        );
+        let handle = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, 0, pid);
         if handle.is_null() {
             return Err(io::Error::last_os_error());
         }
@@ -224,20 +220,13 @@ mod tests {
 
     #[test]
     fn test_is_qwen_process_matches_coder_agent() {
-        let cmd = vec![
-            "node.exe".into(),
-            "coder-agent".into(),
-            "serve".into(),
-        ];
+        let cmd = vec!["node.exe".into(), "coder-agent".into(), "serve".into()];
         assert!(is_qwen_process(&cmd), "应匹配 coder-agent");
     }
 
     #[test]
     fn test_is_qwen_process_matches_cli_agent() {
-        let cmd = vec![
-            "node".into(),
-            "cli-agent".into(),
-        ];
+        let cmd = vec!["node".into(), "cli-agent".into()];
         assert!(is_qwen_process(&cmd), "应匹配 cli-agent");
     }
 

@@ -49,8 +49,9 @@ fn normalize_input(s: &str) -> String {
                 out.push(char::from_u32(c as u32 - 0xFEE0).unwrap_or(c));
             }
             // 全角引号（双引号 + 单引号）
-            '\u{2018}' | '\u{2019}' | '\u{201C}' | '\u{201D}'
-            | '\u{300C}' | '\u{300D}' => out.push('"'),
+            '\u{2018}' | '\u{2019}' | '\u{201C}' | '\u{201D}' | '\u{300C}' | '\u{300D}' => {
+                out.push('"')
+            }
             // 全角空格
             '\u{3000}' => out.push(' '),
             // 保留原字符
@@ -243,7 +244,13 @@ fn main() -> ExitCode {
             monitor_interval,
             working_dir,
             show,
-        }) => cmd_init_config(qwen_path, max_memory_mb, monitor_interval, working_dir, show),
+        }) => cmd_init_config(
+            qwen_path,
+            max_memory_mb,
+            monitor_interval,
+            working_dir,
+            show,
+        ),
         Err(e) => {
             // 双击 .exe 无参：缺少子命令 → 默认走 launch
             if e.kind() == clap::error::ErrorKind::MissingSubcommand {

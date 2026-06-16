@@ -198,8 +198,10 @@ fn register_instances(pids: &[u32], max_memory_mb: u64) -> io::Result<Vec<String
         *core_load.entry(core).or_insert(0) += 1;
 
         if was_shared {
-            warn!("核心不足，PID {} 共享核心 {}（共享后负载 {} 实例）",
-                pid, core, core_load[&core]);
+            warn!(
+                "核心不足，PID {} 共享核心 {}（共享后负载 {} 实例）",
+                pid, core, core_load[&core]
+            );
         }
 
         let priority = state.instances.len() as u32 + 1;
@@ -335,11 +337,7 @@ fn display_dashboard(monitored_pids: &[u32], total_mem_gb: f64, sys: &sysinfo::S
                     .join(",");
                 output.push_str(&format!(
                     "  {:<8}  {:<8}  {:<10}  {:<14}  {:<8}\n",
-                    pid,
-                    cores,
-                    inst.working_set_mb,
-                    inst.max_allowed_memory_mb,
-                    inst.state
+                    pid, cores, inst.working_set_mb, inst.max_allowed_memory_mb, inst.state
                 ));
             } else {
                 // 实例已注销但进程仍在监控列表中

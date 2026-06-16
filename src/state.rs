@@ -285,7 +285,11 @@ mod tests {
         // 验证文件现在已被修复（干净 JSON）
         let fixed_data = fs::read_to_string(&orig_path).expect("读取修复后文件");
         let parsed: Result<StateFile, _> = serde_json::from_str(&fixed_data);
-        assert!(parsed.is_ok(), "修复后的文件应可正常解析: {:?}", parsed.err());
+        assert!(
+            parsed.is_ok(),
+            "修复后的文件应可正常解析: {:?}",
+            parsed.err()
+        );
 
         // 恢复原始状态文件
         match orig_backup {

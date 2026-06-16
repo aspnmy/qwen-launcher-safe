@@ -89,11 +89,7 @@ pub fn read_config() -> LauncherConfig {
     match serde_json::from_str::<LauncherConfig>(&data) {
         Ok(cfg) => cfg,
         Err(e) => {
-            log::warn!(
-                "配置文件 {:?} 格式损坏: {}，使用默认配置",
-                path,
-                e
-            );
+            log::warn!("配置文件 {:?} 格式损坏: {}，使用默认配置", path, e);
             LauncherConfig::default()
         }
     }
