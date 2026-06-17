@@ -99,6 +99,9 @@ pub fn get_qwen_pids(sys: &sysinfo::System) -> HashSet<u32> {
 /// 而非物理核心数。对 CPU 亲和性绑定而言，逻辑处理器才是正确的分配粒度。
 #[cfg(windows)]
 pub fn get_processor_count() -> u32 {
+    // SAFETY: GetSystemInfo 是 Windows 标准 API，
+    // 接受栈上分配的有效 SYSTEM_INFO 结构体指针。
+    // 该结构体由 API 填充，不涉及内存安全问题。
     unsafe {
         let mut info: SYSTEM_INFO = std::mem::zeroed();
         GetSystemInfo(&mut info);
@@ -109,6 +112,9 @@ pub fn get_processor_count() -> u32 {
 /// Linux 下使用 `sysconf(_SC_NPROCESSORS_ONLN)` 获取在线逻辑处理器数
 #[cfg(target_os = "linux")]
 pub fn get_processor_count() -> u32 {
+    // SAFETY: sysconf 是 POSIX 标准 API，接受标准配置常量。
+    // _SC_NPROCESSORS_ONLN 始终返回正整数或 -1（出错时），
+    // 这里是安全的 FFI 调用，不涉及借用的内存。
     unsafe {
         let n = libc::sysconf(libc::_SC_NPROCESSORS_ONLN);
         if n > 0 {
@@ -137,6 +143,11 @@ pub fn get_processor_count() -> u32 {
 /// macOS 和 FreeBSD 不支持 CPU 亲和性设置，返回 `Ok(())`（空操作）。
 #[cfg(windows)]
 pub fn bind_cpu_core(pid: u32, core_index: u32) -> io::Result<()> {
+    // SAFETY: OpenProcess/SetProcessAffinityMask/GetProcessAffinityMask
+    // 是 Windows 标准进程管理 API。handle 有效性在每条 API 调用后
+    // 通过返回值检查（is_null / ret == 0）验证，failure 路径及时
+    // CloseHandle 释放资源。所有指针参数（SYSTEM_INFO）指向栈上
+    // 已初始化的有效内存。
     unsafe {
         let handle = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, 0, pid);
         if handle.is_null() {
@@ -194,6 +205,10 @@ pub fn bind_cpu_core(pid: u32, core_index: u32) -> io::Result<()> {
 /// Linux 下使用 `sched_setaffinity` 设置进程 CPU 亲和性
 #[cfg(target_os = "linux")]
 pub fn bind_cpu_core(pid: u32, core_index: u32) -> io::Result<()> {
+    // SAFETY: sched_setaffinity 是 POSIX 标准 API。
+    // cpu_set_t 是栈上分配的固定大小结构体，CPU_SET 宏在
+    // 有效索引范围内操作（core_index < CPU_SETSIZE）。
+    // pid 参数由调用者传入，经 sysinfo 验证的有效 PID。
     unsafe {
         let mut mask: libc::cpu_set_t = std::mem::zeroed();
         libc::CPU_SET(core_index as usize, &mut mask);

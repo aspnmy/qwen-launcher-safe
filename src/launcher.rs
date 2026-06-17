@@ -143,6 +143,11 @@ pub fn run(args: &[String]) -> ExitCode {
         extern "C" fn sigterm_handler(_sig: i32) {
             SHOULD_EXIT.store(true, Ordering::SeqCst);
         }
+        // SAFETY: libc::signal 是 POSIX 标准 API。
+        // sigterm_handler 是 extern "C" 函数，符合 signal(3) 签名要求。
+        // 信号处理程序中仅写入 AtomicBool，这是异步信号安全的操作。
+        // 此信号处理器在 launcher 整个生命周期内有效，生命周期管理
+        // 正确（静态函数，launcher 不卸载动态库）。
         unsafe {
             libc::signal(libc::SIGTERM, sigterm_handler as libc::sighandler_t);
         }

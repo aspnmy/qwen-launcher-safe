@@ -265,6 +265,7 @@ pub fn new_instance(pid: u32, core: u32, priority: u32, max_memory_mb: u64) -> I
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
 
     #[test]
@@ -294,6 +295,7 @@ mod tests {
         assert_eq!(&data[..=pos.unwrap()], data);
     }
 
+    #[serial]
     #[test]
     fn test_tolerant_read_of_corrupted_state() {
         // 构造一个尾部有垃圾字符的损坏 JSON
@@ -364,6 +366,7 @@ mod tests {
         assert_eq!(inst.last_heartbeat, inst.start_time);
     }
 
+    #[serial]
     #[test]
     fn test_read_state_file_always_returns_valid() {
         // 无论状态文件是否存在，read_state_file() 都应返回可用的 StateFile

@@ -366,6 +366,7 @@ fn cmd_init_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::io::Cursor;
 
     #[test]
@@ -406,6 +407,7 @@ mod tests {
         assert_eq!(normalize_input("\u{2018}hi\u{2019}"), "\"hi\"");
     }
 
+    #[serial]
     #[test]
     fn test_interactive_setup_defaults() {
         // 所有步骤留空 → 使用默认值
@@ -425,6 +427,7 @@ mod tests {
         let _ = std::fs::remove_file(&orig);
     }
 
+    #[serial]
     #[test]
     fn test_interactive_setup_with_custom_values() {
         // 提供自定义值（注意：qwen_path 需要真实路径才能通过验证）
@@ -445,6 +448,7 @@ mod tests {
         let _ = std::fs::remove_file(&orig);
     }
 
+    #[serial]
     #[test]
     fn test_interactive_setup_invalid_memory_uses_default() {
         // 输入无效内存值 → 使用默认值
