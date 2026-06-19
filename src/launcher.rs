@@ -91,10 +91,9 @@ pub fn run(args: &[String]) -> ExitCode {
     if let Ok(exe) = process::self_exe_path() {
         let exe_str = exe.to_string_lossy().to_string();
         info!("启动监控仪表盘窗口...");
-        // Windows start: 空标题避免路径中$符号被误解析
-        let quoted_exe = format!("\"{}\"", exe_str);
+        // 不预加引号——Rust Command 原生处理含空格路径的引号
         match std::process::Command::new("cmd")
-            .args(["/c", "start", "", &quoted_exe, "dashboard"])
+            .args(["/c", "start", "", &exe_str, "dashboard"])
             .spawn()
         {
             Ok(_) => info!("监控窗口已启动"),
