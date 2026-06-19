@@ -102,6 +102,20 @@ pub fn run(args: &[String]) -> ExitCode {
         }
     }
 
+    // 2.5. 快速检测：qwen.cmd 包装器可能瞬间退出（node.exe 不存在）
+    {
+        use std::thread;
+        use std::time::Duration;
+        thread::sleep(Duration::from_millis(800));
+        if let Ok(Some(status)) = qwen_child.try_wait() {
+            error!(
+                "Qwen 启动失败: qwen.cmd 已退出 (code: {})。node.exe 可能不存在或启动失败",
+                status
+            );
+            return ExitCode::from(1);
+        }
+    }
+
     // 3. 轮询发现子进程（至多 5 秒）
     let new_pids = poll_new_qwen_processes(&baseline);
     let (new_pids, monitored_qwen_pids) = if new_pids.is_empty() {
@@ -235,6 +249,7 @@ fn select_best_core(phys_cores: u32, core_load: &HashMap<u32, u32>) -> u32 {
 fn register_instances(pids: &[u32], max_memory_mb: u64) -> io::Result<Vec<String>> {
     let _lock = state::StateFileLock::acquire()?;
     let mut state = state::read_state_file()?;
+    state::cleanup_stale_entries(&mut state);
     state::cleanup_stale_entries(&mut state);
     let phys_cores = process::get_processor_count();
     state.global_state.physical_cores = phys_cores;

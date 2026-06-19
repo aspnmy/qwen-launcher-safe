@@ -33,7 +33,6 @@ use std::io;
 use std::path::PathBuf;
 
 use chrono::Utc;
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 /// 单个 Qwen 实例的运行时状态
@@ -188,17 +187,21 @@ pub fn write_state_file(state: &StateFile) -> io::Result<()> {
     Ok(())
 }
 
-/// 状态文件互斥锁守卫
+/// 状态文件互斥锁守卫（PID 所有权锁文件）
 ///
-/// 持有期间阻止其他进程（通过 `fs2::FileExt::lock_exclusive`）读取或写入状态文件。
-/// 用于 `read→modify→write` 原子操作的保护，防止多进程并发导致：
-/// - CPU 核分配冲突（两个进程绑定到同一核）
-/// - 实例注册丢失（最后写入覆盖）
-/// - totalInstances 计数不准确
+/// 用 `<statefile>.lock` 文件替代 `fs2` 文件锁。锁文件写入当前进程 PID。
+/// 获取时检查 PID 是否存活——不存活则判定为僵死锁并自动破除。
 ///
-/// Drop 时自动释放文件锁。
+/// Drop 时自动删除锁文件释放锁。
 pub struct StateFileLock {
-    _file: std::fs::File,
+    lock_path: std::path::PathBuf,
+}
+
+/// 检查进程是否存活
+fn pid_exists(pid: u32) -> bool {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_process(sysinfo::Pid::from_u32(pid));
+    sys.process(sysinfo::Pid::from_u32(pid)).is_some()
 }
 
 /// 清理状态文件中僵死实例（PID 不再存在于系统中）
@@ -220,32 +223,55 @@ pub fn cleanup_stale_entries(state: &mut StateFile) {
 }
 
 impl StateFileLock {
-    /// 获取状态文件排他锁
+    /// 获取状态文件排他锁（PID 所有权）
     ///
-    /// 文件不存在时先创建空状态文件，确保 lock_exclusive 可操作。
+    /// 创建 `<statefile>.lock` 文件写入当前 PID。
+    /// 锁文件已存在时检查持有者 PID 是否存活——不存活则破锁后重建。
     pub fn acquire() -> io::Result<Self> {
-        let path = state_file_path();
-        // 确保文件存在以便加锁
-        if !path.exists() {
+        let state_path = state_file_path();
+        let lock_path = state_path.with_extension("json.lock");
+
+        // 确保状态文件存在
+        if !state_path.exists() {
             let empty = StateFile::default();
             write_state_file(&empty)?;
         }
 
+        let my_pid = std::process::id();
         const MAX_RETRIES: u32 = 15;
-        let mut last_err = None;
 
         for attempt in 0..MAX_RETRIES {
-            let file = std::fs::OpenOptions::new()
-                .read(true)
+            match std::fs::OpenOptions::new()
                 .write(true)
-                .create(false)
-                .open(&path)?;
-            match file.lock_exclusive() {
-                Ok(()) => return Ok(Self { _file: file }),
-                Err(e) => {
-                    last_err = Some(e);
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(mut f) => {
+                    use std::io::Write;
+                    write!(f, "{}", my_pid)?;
+                    return Ok(Self { lock_path });
+                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                    // 锁文件存在 — 检查持有者是否存活
+                    let holder_alive = std::fs::read_to_string(&lock_path)
+                        .ok()
+                        .and_then(|s| s.trim().parse::<u32>().ok())
+                        .map(pid_exists)
+                        .unwrap_or(false);
+
+                    if !holder_alive {
+                        // 僵死锁 — 破锁
+                        let dead_pid = std::fs::read_to_string(&lock_path)
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string();
+                        log::warn!("检测到僵死锁文件 (PID {} 已不存在)，强制获取", dead_pid);
+                        let _ = std::fs::remove_file(&lock_path);
+                        continue;
+                    }
+
                     if attempt < MAX_RETRIES - 1 {
-                        let delay_ms = 200 * (1u64 << attempt.min(5)); // 200,400,800,1600,3200,3200...
+                        let delay_ms = 200 * (1u64 << attempt.min(5));
                         log::warn!(
                             "状态文件锁被占用，第 {}/{} 次重试 ({}ms 后)...",
                             attempt + 1,
@@ -255,9 +281,20 @@ impl StateFileLock {
                         std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     }
                 }
+                Err(e) => return Err(e),
             }
         }
-        Err(last_err.unwrap())
+
+        Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "无法获取状态文件锁：锁文件一直被占用",
+        ))
+    }
+}
+
+impl Drop for StateFileLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.lock_path);
     }
 }
 
