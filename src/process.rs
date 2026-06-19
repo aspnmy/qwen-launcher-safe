@@ -51,6 +51,7 @@ pub fn find_qwen_command() -> io::Result<PathBuf> {
     if let Some(ref path_str) = cfg.qwen_path {
         let path = PathBuf::from(path_str);
         if path.exists() {
+            let path = path.canonicalize().unwrap_or(path);
             log::info!("qwen 路径: {:?}（来自配置文件）", path);
             return Ok(path);
         }
@@ -399,5 +400,30 @@ mod tests {
         assert!(re.is_match("cli-agent"), "正则应匹配 'cli-agent'");
         assert!(re.is_match("QWEN"), "正则应匹配大写 'QWEN'");
         assert!(!re.is_match("node"), "正则不应匹配 'node'");
+    }
+    #[test]
+    fn test_path_canonicalize_resolves_dotdot() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join("agent_launcher_test_canon");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).expect("create temp dir");
+        let sub = tmp.join("sub");
+        std::fs::create_dir(&sub).expect("create subdir");
+        let file = sub.join("test.exe");
+        std::fs::File::create(&file).expect("create file").write_all(b"fake").unwrap();
+
+        // construct path with .. : <tmp>/sub/../sub/test.exe
+        let dotdot = sub.join("..").join("sub").join("test.exe");
+        assert!(dotdot.exists(), "path with .. should exist");
+
+        // BUG: PathBuf::from does not resolve ..
+        let unresolved = std::path::PathBuf::from(dotdot.to_str().unwrap());
+        assert!(unresolved.to_str().unwrap().contains(".."), "PathBuf::from should NOT resolve ..");
+
+        // FIX: canonicalize resolves .. to canonical path
+        let resolved = dotdot.canonicalize().expect("canonicalize should succeed");
+        assert!(!resolved.to_str().unwrap().contains(".."), "canonical path should not contain ..");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
