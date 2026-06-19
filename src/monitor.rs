@@ -142,12 +142,15 @@ pub fn run_dashboard() -> ExitCode {
     #[cfg(windows)]
     unsafe {
         use windows_sys::Win32::System::Console::{
-            GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_OUTPUT_HANDLE,
+            GetStdHandle, GetConsoleMode, SetConsoleMode,
+            ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_OUTPUT_HANDLE,
         };
         let h = GetStdHandle(STD_OUTPUT_HANDLE);
         if !h.is_null() {
             let mut mode = 0u32;
-            SetConsoleMode(h, ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+            if GetConsoleMode(h, &mut mode) != 0 {
+                SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+            }
         }
     }
 
