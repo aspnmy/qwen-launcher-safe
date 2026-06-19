@@ -74,9 +74,7 @@ impl DashboardApp {
         self.instances = sorted
             .iter()
             .map(|inst| {
-                let alive = sys
-                    .process(sysinfo::Pid::from_u32(inst.pid))
-                    .is_some();
+                let alive = sys.process(sysinfo::Pid::from_u32(inst.pid)).is_some();
                 let hb = if inst.last_heartbeat.len() >= 19 {
                     inst.last_heartbeat[11..19].to_string()
                 } else {
@@ -98,7 +96,11 @@ impl DashboardApp {
                         .join(","),
                     working_set_mb: inst.working_set_mb,
                     max_mb: inst.max_allowed_memory_mb,
-                    state: if alive { "running".into() } else { "dead".into() },
+                    state: if alive {
+                        "running".into()
+                    } else {
+                        "dead".into()
+                    },
                     heartbeat: hb,
                 }
             })
@@ -124,10 +126,13 @@ impl eframe::App for DashboardApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // 标题
-            ui.heading(RichText::new(format!(
-                "Agent 资源监控仪表盘 v{}",
-                env!("CARGO_PKG_VERSION")
-            )).strong());
+            ui.heading(
+                RichText::new(format!(
+                    "Agent 资源监控仪表盘 v{}",
+                    env!("CARGO_PKG_VERSION")
+                ))
+                .strong(),
+            );
 
             ui.separator();
 
@@ -171,7 +176,9 @@ impl eframe::App for DashboardApp {
                                     ui.label(RichText::new(&row.agent_name).color(color));
                                     ui.label(RichText::new(row.pid.to_string()).color(color));
                                     ui.label(RichText::new(&row.cores).color(color));
-                                    ui.label(RichText::new(row.working_set_mb.to_string()).color(color));
+                                    ui.label(
+                                        RichText::new(row.working_set_mb.to_string()).color(color),
+                                    );
                                     ui.label(RichText::new(row.max_mb.to_string()).color(color));
                                     ui.label(RichText::new(&row.state).color(color));
                                     ui.label(RichText::new(&row.heartbeat).color(color));

@@ -196,7 +196,7 @@ fn interactive_setup_with(reader: &mut dyn BufRead) -> ExitCode {
         max_memory_mb,
         monitor_interval_sec: monitor_interval,
         working_dir: None,
-            agent_name: None,
+        agent_name: None,
     };
     if let Some(ref path) = qwen_path {
         cfg.qwen_path = Some(path.clone());
