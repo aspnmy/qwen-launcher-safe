@@ -51,6 +51,23 @@ use crate::config;
 /// 如果 `qwenPath` 直接指向 `node.exe`，自动寻找同安装目录下的 `bin/qwen.cmd`。
 /// `qwen.cmd` 是官方入口，负责传递 `--expose-gc` 等必要的 node 参数。
 /// 直接调用 `node.exe` 会丢失这些参数导致 GC 不可用、内存泄漏。
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    // \\?\ is the Windows verbatim/extended-length path prefix
+    let prefix: &[char] = &['\\', '\\', '?', '\\'];
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() >= 4 && chars[..4] == prefix[..] {
+        return PathBuf::from(chars[4..].iter().collect::<String>());
+    }
+    path
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    path
+}
+
 fn resolve_qwen_entry(path: std::path::PathBuf) -> std::path::PathBuf {
     // Check if this is node.exe directly
     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
@@ -83,7 +100,10 @@ pub fn find_qwen_command() -> io::Result<PathBuf> {
     if let Some(ref path_str) = cfg.qwen_path {
         let path = PathBuf::from(path_str);
         if path.exists() {
-            let path = path.canonicalize().unwrap_or(path);
+            let path = strip_verbatim_prefix(
+                path.canonicalize()
+                    .map_or_else(|_| path.clone(), |p| strip_verbatim_prefix(p)),
+            );
             let path = resolve_qwen_entry(path);
             log::info!("qwen 路径: {:?}（来自配置文件）", path);
             return Ok(path);
