@@ -174,21 +174,26 @@ pub fn run_dashboard() -> ExitCode {
         // Clear screen and reposition cursor
         print!("\x1b[2J\x1b[H");
 
-        println!("+------------------------------------------------------------+");
-        println!("|  Qwen Code 资源监控仪表盘 (v{})                              |", env!("CARGO_PKG_VERSION"));
-        println!("+------------------------------------------------------------+");
-        println!("|  系统物理内存: {:.1} GB  |  已用: {:.1} GB  |  逻辑处理器: {:<3} |",
+        let sys_time = chrono::Local::now().format("%H:%M:%S").to_string();
+        println!("+------------------------------------------------------------------+");
+        println!("|  Agent 资源监控仪表盘 (v{})                  系统时间: {} |", env!("CARGO_PKG_VERSION"), sys_time);
+        println!("+------------------------------------------------------------------+");
+        println!("|  系统物理内存: {:.1} GB  |  已用: {:.1} GB  |  逻辑处理器: {:<3}       |",
             total_mem_gb, used_mem_gb, phys_cores);
-        println!("+------------------------------------------------------------+");
+        println!("+------------------------------------------------------------------+");
 
         if state.instances.is_empty() {
-            println!("|  (无注册实例 — 等待 Qwen 进程启动...)                        |");
+            println!("|  (无注册实例 — 等待 Agent 进程启动...)                         |");
         } else {
-            println!("  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
-                "PID", "CPU 核", "内存(MB)", "最大(MB)", "状态", "最后心跳");
-            println!("  ------  ------  ---------  ---------  --------  ----------------");
+            println!("  {:<10}  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
+                "Agent", "PID", "CPU 核", "内存(MB)", "最大(MB)", "状态", "最后心跳");
+            println!("  ---------  ------  ------  ---------  ---------  --------  ----------------");
 
-            for inst in state.instances.values() {
+            // Sort by agent_name then pid
+            let mut sorted: Vec<_> = state.instances.values().collect();
+            sorted.sort_by(|a, b| a.agent_name.cmp(&b.agent_name).then(a.pid.cmp(&b.pid)));
+
+            for inst in &sorted {
                 let alive = sys.process(sysinfo::Pid::from_u32(inst.pid)).is_some();
                 let state_str = if alive { "running" } else { "dead" };
                 let cores = inst.bound_cores.iter()

@@ -135,7 +135,16 @@ pub fn run(args: &[String]) -> ExitCode {
 
     // 僵死实例清理已合并到 register_instances() 内部（同一锁 scope）
 
-    let registered_keys = match register_instances(&new_pids, cfg.max_memory_mb) {
+    let agent_name = cfg.agent_name.unwrap_or_else(|| {
+        qwen_cmd
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("agent")
+            .to_string()
+    });
+    info!("Agent: {}", agent_name);
+
+    let registered_keys = match register_instances(&new_pids, &agent_name, cfg.max_memory_mb) {
         Ok(keys) => {
             info!("已注册 {} 个实例", keys.len());
             keys
@@ -248,7 +257,7 @@ fn select_best_core(phys_cores: u32, core_load: &HashMap<u32, u32>) -> u32 {
 /// 2. 收集已占用核心（避免多实例冲突）
 /// 3. 为每个新 PID 分配最小空闲核心
 /// 4. 写入状态文件并调用 Windows API 绑定 CPU 亲和性
-fn register_instances(pids: &[u32], max_memory_mb: u64) -> io::Result<Vec<String>> {
+fn register_instances(pids: &[u32], agent_name: &str, max_memory_mb: u64) -> io::Result<Vec<String>> {
     let _lock = state::StateFileLock::acquire()?;
     let mut state = state::read_state_file()?;
     state::cleanup_stale_entries(&mut state);
@@ -308,7 +317,7 @@ fn register_instances(pids: &[u32], max_memory_mb: u64) -> io::Result<Vec<String
         }
 
         let priority = state.instances.len() as u32 + 1;
-        let inst = state::new_instance(pid, core, priority, max_memory_mb);
+        let inst = state::new_instance(agent_name.to_string(), pid, core, priority, max_memory_mb);
         state.instances.insert(pkey.clone(), inst);
         registered.push(pkey.clone());
     }

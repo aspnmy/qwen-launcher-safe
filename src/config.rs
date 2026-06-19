@@ -37,6 +37,10 @@ pub struct LauncherConfig {
     /// Qwen 工作目录（使子进程能加载指定目录下的 .qwen/skills/ 技能）
     #[serde(rename = "workingDir", default)]
     pub working_dir: Option<String>,
+
+    /// Agent 名称（用于仪表盘分类显示，未设置时自动从入口文件名推导）
+    #[serde(rename = "agentName", default)]
+    pub agent_name: Option<String>,
 }
 
 const fn default_memory() -> u64 {
@@ -53,6 +57,7 @@ impl Default for LauncherConfig {
             max_memory_mb: default_memory(),
             monitor_interval_sec: default_interval(),
             working_dir: None,
+            agent_name: None,
         }
     }
 }
@@ -188,6 +193,7 @@ mod tests {
             max_memory_mb: 2048,
             monitor_interval_sec: 30,
             working_dir: Some("C:\\test\\wd".into()),
+            agent_name: None,
         };
         write_config(&cfg).expect("写入配置应成功");
 

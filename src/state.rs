@@ -38,6 +38,9 @@ use serde::{Deserialize, Serialize};
 /// 单个 Qwen 实例的运行时状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Instance {
+    /// Agent 名称（如 qwen / gpt / ...）
+    #[serde(default = "default_agent_name")]
+    pub agent_name: String,
     /// 进程 ID
     pub pid: u32,
     /// 启动时间（RFC 3339）
@@ -298,6 +301,10 @@ impl Drop for StateFileLock {
     }
 }
 
+fn default_agent_name() -> String {
+    "-".into()
+}
+
 /// 创建一个新的 `Instance` 记录
 ///
 /// # 参数
@@ -306,10 +313,11 @@ impl Drop for StateFileLock {
 /// * `core` — 绑定的 CPU 核心索引
 /// * `priority` — 实例优先级
 /// * `max_memory_mb` — 允许的最大内存（MB）
-pub fn new_instance(pid: u32, core: u32, priority: u32, max_memory_mb: u64) -> Instance {
+pub fn new_instance(agent_name: String, pid: u32, core: u32, priority: u32, max_memory_mb: u64) -> Instance {
     let now = Utc::now().to_rfc3339();
     Instance {
         pid,
+        agent_name,
         start_time: now.clone(),
         working_set_mb: 0,
         bound_cores: vec![core],
@@ -413,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_new_instance_creates_valid_record() {
-        let inst = new_instance(42, 1, 2, 2048);
+        let inst = new_instance("test".into(), 42, 1, 2, 2048);
         assert_eq!(inst.pid, 42);
         assert_eq!(inst.bound_cores, vec![1]);
         assert_eq!(inst.max_allowed_memory_mb, 2048);
@@ -439,7 +447,7 @@ mod tests {
     fn test_cleanup_stale_entries_removes_dead_pids() {
         // 创建一个包含不存在的 PID 的状态文件
         let mut state = StateFile::default();
-        let inst = new_instance(999_999, 0, 1, 1024); // 这个 PID 几乎肯定不存在
+        let inst = new_instance("ghost".into(), 999_999, 0, 1, 1024); // 这个 PID 几乎肯定不存在
         state.instances.insert("999999".into(), inst);
         assert_eq!(state.instances.len(), 1);
 
@@ -453,7 +461,7 @@ mod tests {
         // 当前进程应被视为存活的
         let mut state = StateFile::default();
         let my_pid = std::process::id();
-        let inst = new_instance(my_pid, 0, 1, 1024);
+        let inst = new_instance("live".into(), my_pid, 0, 1, 1024);
         state.instances.insert(my_pid.to_string(), inst);
         assert_eq!(state.instances.len(), 1);
 
