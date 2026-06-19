@@ -145,11 +145,14 @@ pub fn run_dashboard() -> ExitCode {
             GetStdHandle, GetConsoleMode, SetConsoleMode,
             ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_OUTPUT_HANDLE,
         };
+        // ENABLE_QUICK_EDIT_MODE = 0x0040 (not in windows-sys constants)
+        const ENABLE_QUICK_EDIT_MODE: u32 = 0x0040;
         let h = GetStdHandle(STD_OUTPUT_HANDLE);
         if !h.is_null() {
             let mut mode = 0u32;
             if GetConsoleMode(h, &mut mode) != 0 {
-                SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+                // Enable VT + disable QuickEdit (selection freezes output)
+                SetConsoleMode(h, (mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) & !ENABLE_QUICK_EDIT_MODE);
             }
         }
     }
