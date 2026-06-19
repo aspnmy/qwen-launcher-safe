@@ -3,7 +3,7 @@
 > **English version: [README.md](./README.md)**
 > **更多文档：[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**
 
-[agent-launcher.ps1](https://github.com/aspnmy/qwen-coder) 的 Rust 重构版 — 通用 CLI agent 资源保护启动器 — 为每实例强制执行 CPU/内存边界。
+纯RUST编写 — 通用 CLI agent 资源保护启动器 — 为每agent实例强制执行 CPU/内存边界。
 
 ## 特性
 
