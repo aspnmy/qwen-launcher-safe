@@ -138,6 +138,19 @@ pub fn run_dashboard() -> ExitCode {
         .format_timestamp_secs()
         .try_init();
 
+    // Windows: enable ANSI VT for \x1b[2J screen clearing
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::System::Console::{
+            GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_OUTPUT_HANDLE,
+        };
+        let h = GetStdHandle(STD_OUTPUT_HANDLE);
+        if !h.is_null() {
+            let mut mode = 0u32;
+            SetConsoleMode(h, ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
+    }
+
     let state = match state::read_state_file() {
         Ok(s) => s,
         Err(e) => {
@@ -205,8 +218,9 @@ pub fn run_dashboard() -> ExitCode {
                 } else {
                     "-"
                 };
-                println!("  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
-                    inst.pid, cores, inst.working_set_mb, inst.max_allowed_memory_mb,
+                let display_name = if inst.agent_name.is_empty() { "-" } else { &inst.agent_name };
+                println!("  {:<10}  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
+                    display_name, inst.pid, cores, inst.working_set_mb, inst.max_allowed_memory_mb,
                     state_str, hb_short);
             }
         }
