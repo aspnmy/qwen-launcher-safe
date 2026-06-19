@@ -149,7 +149,10 @@ pub fn run(args: &[String]) -> ExitCode {
         // 此信号处理器在 launcher 整个生命周期内有效，生命周期管理
         // 正确（静态函数，launcher 不卸载动态库）。
         unsafe {
-            libc::signal(libc::SIGTERM, sigterm_handler as *const () as libc::sighandler_t);
+            libc::signal(
+                libc::SIGTERM,
+                sigterm_handler as *const () as libc::sighandler_t,
+            );
         }
     }
 
@@ -276,7 +279,10 @@ fn register_instances(pids: &[u32], max_memory_mb: u64) -> io::Result<Vec<String
         }
 
         if !bound {
-            warn!("绑定 CPU 核失败 (PID {}): 所有 {} 个核心均不可用", pid, phys_cores);
+            warn!(
+                "绑定 CPU 核失败 (PID {}): 所有 {} 个核心均不可用",
+                pid, phys_cores
+            );
             continue;
         }
 
