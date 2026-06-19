@@ -19,7 +19,6 @@ use std::time::{Duration, Instant};
 
 use log::{error, info, warn};
 
-
 /// Ctrl+C 触发时设为 true，主循环检测后触发优雅退出
 static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 
@@ -257,7 +256,11 @@ fn select_best_core(phys_cores: u32, core_load: &HashMap<u32, u32>) -> u32 {
 /// 2. 收集已占用核心（避免多实例冲突）
 /// 3. 为每个新 PID 分配最小空闲核心
 /// 4. 写入状态文件并调用 Windows API 绑定 CPU 亲和性
-fn register_instances(pids: &[u32], agent_name: &str, max_memory_mb: u64) -> io::Result<Vec<String>> {
+fn register_instances(
+    pids: &[u32],
+    agent_name: &str,
+    max_memory_mb: u64,
+) -> io::Result<Vec<String>> {
     let _lock = state::StateFileLock::acquire()?;
     let mut state = state::read_state_file()?;
     state::cleanup_stale_entries(&mut state);

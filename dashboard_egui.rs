@@ -74,7 +74,9 @@ impl DashboardApp {
         self.instances = sorted
             .iter()
             .map(|inst| {
-                let alive = sys.process(sysinfo::Pid::from_u32(inst.pid)).is_some();
+                let alive = sys
+                    .process(sysinfo::Pid::from_u32(inst.pid))
+                    .is_some();
                 let hb = if inst.last_heartbeat.len() >= 19 {
                     inst.last_heartbeat[11..19].to_string()
                 } else {
@@ -96,11 +98,7 @@ impl DashboardApp {
                         .join(","),
                     working_set_mb: inst.working_set_mb,
                     max_mb: inst.max_allowed_memory_mb,
-                    state: if alive {
-                        "running".into()
-                    } else {
-                        "dead".into()
-                    },
+                    state: if alive { "running".into() } else { "dead".into() },
                     heartbeat: hb,
                 }
             })
@@ -126,13 +124,10 @@ impl eframe::App for DashboardApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // 标题
-            ui.heading(
-                RichText::new(format!(
-                    "Agent 资源监控仪表盘 v{}",
-                    env!("CARGO_PKG_VERSION")
-                ))
-                .strong(),
-            );
+            ui.heading(RichText::new(format!(
+                "Agent 资源监控仪表盘 v{}",
+                env!("CARGO_PKG_VERSION")
+            )).strong());
 
             ui.separator();
 
@@ -176,9 +171,7 @@ impl eframe::App for DashboardApp {
                                     ui.label(RichText::new(&row.agent_name).color(color));
                                     ui.label(RichText::new(row.pid.to_string()).color(color));
                                     ui.label(RichText::new(&row.cores).color(color));
-                                    ui.label(
-                                        RichText::new(row.working_set_mb.to_string()).color(color),
-                                    );
+                                    ui.label(RichText::new(row.working_set_mb.to_string()).color(color));
                                     ui.label(RichText::new(row.max_mb.to_string()).color(color));
                                     ui.label(RichText::new(&row.state).color(color));
                                     ui.label(RichText::new(&row.heartbeat).color(color));
@@ -201,40 +194,8 @@ impl eframe::App for DashboardApp {
     }
 }
 
-/// 加载系统 CJK 字体（中文显示支持）
-fn load_chinese_font() -> Option<egui::FontData> {
-    let paths = [
-        "C:\\Windows\\Fonts\\msyh.ttc",
-        "C:\\Windows\\Fonts\\simsun.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-    ];
-    for path in &paths {
-        if let Ok(data) = std::fs::read(path) {
-            log::info!("加载中文字体: {}", path);
-            return Some(egui::FontData::from_owned(data));
-        }
-    }
-    log::warn!("未找到中文字体，中文可能显示为口");
-    None
-}
-
-/// 配置 egui 字体以支持中文
-fn setup_chinese_fonts(ctx: &egui::Context) {
-    if let Some(font_data) = load_chinese_font() {
-        let mut fonts = egui::FontDefinitions::default();
-        fonts
-            .font_data
-            .insert("chinese".into(), std::sync::Arc::new(font_data));
-        if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-            family.insert(0, "chinese".into());
-        }
-        ctx.set_fonts(fonts);
-    }
-}
-
 /// 启动 egui 仪表盘窗口
-pub fn run() -> std::process::ExitCode {
+pub fn run() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(Vec2::new(720.0, 480.0))
@@ -245,10 +206,6 @@ pub fn run() -> std::process::ExitCode {
     let _ = eframe::run_native(
         "Agent 资源监控仪表盘",
         options,
-        Box::new(|cc| {
-            setup_chinese_fonts(&cc.egui_ctx);
-            Ok(Box::new(DashboardApp::new()))
-        }),
+        Box::new(|_cc| Ok(Box::new(DashboardApp::new()))),
     );
-    std::process::ExitCode::SUCCESS
 }

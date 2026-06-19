@@ -156,7 +156,11 @@ pub fn run_json() -> ExitCode {
     }
 
     let lock_path = state::state_file_path().with_extension("json.lock");
-    let lock_status = if lock_path.exists() { "locked" } else { "normal" };
+    let lock_status = if lock_path.exists() {
+        "locked"
+    } else {
+        "normal"
+    };
 
     let output = serde_json::json!({
         "system": {
@@ -169,7 +173,10 @@ pub fn run_json() -> ExitCode {
         "lock_status": lock_status
     });
 
-    println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&output).unwrap_or_default()
+    );
     ExitCode::SUCCESS
 }
 

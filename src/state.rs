@@ -313,7 +313,13 @@ fn default_agent_name() -> String {
 /// * `core` — 绑定的 CPU 核心索引
 /// * `priority` — 实例优先级
 /// * `max_memory_mb` — 允许的最大内存（MB）
-pub fn new_instance(agent_name: String, pid: u32, core: u32, priority: u32, max_memory_mb: u64) -> Instance {
+pub fn new_instance(
+    agent_name: String,
+    pid: u32,
+    core: u32,
+    priority: u32,
+    max_memory_mb: u64,
+) -> Instance {
     let now = Utc::now().to_rfc3339();
     Instance {
         pid,
