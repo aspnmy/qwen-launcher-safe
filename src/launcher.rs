@@ -259,7 +259,27 @@ fn register_instances(pids: &[u32], max_memory_mb: u64) -> io::Result<Vec<String
         }
 
         let was_shared = core_load.len() >= phys_cores as usize;
-        let core = select_best_core(phys_cores, &core_load);
+        let mut core = select_best_core(phys_cores, &core_load);
+
+        // 绑定 CPU 优先选中的核，失败则回退尝试其他核
+        let mut bound = false;
+        for attempt in 0..phys_cores {
+            let try_core = (core + attempt) % phys_cores;
+            if process::bind_cpu_core(pid, try_core).is_ok() {
+                if try_core != core {
+                    log::info!("PID {} 核心 {} 不可用，回退到核心 {}", pid, core, try_core);
+                }
+                core = try_core;
+                bound = true;
+                break;
+            }
+        }
+
+        if !bound {
+            warn!("绑定 CPU 核失败 (PID {}): 所有 {} 个核心均不可用", pid, phys_cores);
+            continue;
+        }
+
         *core_load.entry(core).or_insert(0) += 1;
 
         if was_shared {
@@ -273,11 +293,6 @@ fn register_instances(pids: &[u32], max_memory_mb: u64) -> io::Result<Vec<String
         let inst = state::new_instance(pid, core, priority, max_memory_mb);
         state.instances.insert(pkey.clone(), inst);
         registered.push(pkey.clone());
-
-        // 绑定 CPU
-        if let Err(e) = process::bind_cpu_core(pid, core) {
-            warn!("绑定 CPU 核失败 (PID {}): {}", pid, e);
-        }
     }
 
     state.global_state.total_instances = state.instances.len() as u32;
