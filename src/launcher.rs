@@ -91,8 +91,10 @@ pub fn run(args: &[String]) -> ExitCode {
     if let Ok(exe) = process::self_exe_path() {
         let exe_str = exe.to_string_lossy().to_string();
         info!("启动监控仪表盘窗口...");
+        // Windows start: 第一个引号=标题，路径含空格需加引号
+        let quoted_exe = format!("\"{}\"", exe_str);
         match std::process::Command::new("cmd")
-            .args(["/c", "start", "\"Qwen Monitor\"", &exe_str, "dashboard"])
+            .args(["/c", "start", "\"Qwen Monitor\"", &quoted_exe, "dashboard"])
             .spawn()
         {
             Ok(_) => info!("监控窗口已启动"),
