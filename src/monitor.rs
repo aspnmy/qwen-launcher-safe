@@ -128,11 +128,12 @@ fn check_instances() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 
-/// 一次性状态展示（前台界面）
+/// 实时资源监控仪表盘（前台刷新）
 ///
-/// 读取共享状态文件和系统信息，输出当前资源监控快照。
-/// 不进入后台循环，输出后立即退出。
-pub fn run_status() -> ExitCode {
+/// 读取共享状态文件和系统信息，每 2 秒刷新全屏仪表盘。
+/// Ctrl+C 退出，不修改状态文件，纯只读。
+/// 可独立于 launch/monitor 运行。
+pub fn run_dashboard() -> ExitCode {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
         .format_timestamp_secs()
         .try_init();
@@ -149,72 +150,87 @@ pub fn run_status() -> ExitCode {
     sys.refresh_all();
     sys.refresh_memory();
 
+    use std::io::Write;
+
     let total_mem_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
-    let used_mem_gb = sys.used_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
     let phys_cores = state.global_state.physical_cores;
-    let total_instances = state.instances.len();
 
-    println!("+------------------------------------------------------------+");
-    println!("|  Qwen Code 资源监控状态 (v{})                              |", env!("CARGO_PKG_VERSION"));
-    println!("+------------------------------------------------------------+");
-    println!("|  系统物理内存: {:.1} GB  |  已用: {:.1} GB  |  逻辑处理器: {}",
-        total_mem_gb, used_mem_gb, phys_cores);
-    println!("+------------------------------------------------------------+");
-
-    if state.instances.is_empty() {
-        println!("|  (无注册实例)                                               |");
-    } else {
-        println!("  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
-            "PID", "CPU 核", "内存(MB)", "最大(MB)", "状态", "最后心跳");
-        println!("  ------  ------  ---------  ---------  --------  ----------------");
-
-        for inst in state.instances.values() {
-            let alive = sys.process(sysinfo::Pid::from_u32(inst.pid)).is_some();
-            let state_str = if alive { "running" } else { "dead" };
-            let cores = inst.bound_cores.iter()
-                .map(|c| c.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            // 提取心跳时间中的 HH:MM:SS 部分
-            let hb_short = if inst.last_heartbeat.len() >= 19 {
-                &inst.last_heartbeat[11..19]
-            } else {
-                "-"
-            };
-            println!("  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
-                inst.pid, cores, inst.working_set_mb, inst.max_allowed_memory_mb,
-                state_str, hb_short);
-        }
-    }
-
-    // 检查僵死锁文件
-    let lock_path = state::state_file_path().with_extension("json.lock");
-    let stale_lock = if lock_path.exists() {
-        if let Ok(lock_pid_str) = std::fs::read_to_string(&lock_path) {
-            if let Ok(lock_pid) = lock_pid_str.trim().parse::<u32>() {
-                let mut s = sysinfo::System::new();
-                s.refresh_process(sysinfo::Pid::from_u32(lock_pid));
-                if s.process(sysinfo::Pid::from_u32(lock_pid)).is_none() {
-                    format!("1 (僵死 PID {})", lock_pid)
-                } else {
-                    "0".to_string()
-                }
-            } else {
-                "1 (损坏)".to_string()
+    loop {
+        // Refresh state and system info
+        let state = match state::read_state_file() {
+            Ok(s) => s,
+            Err(_) => {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                continue;
             }
+        };
+        let mut sys = sysinfo::System::new_all();
+        sys.refresh_all();
+        sys.refresh_memory();
+
+        let used_mem_gb = sys.used_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+        let total_instances = state.instances.len();
+
+        // Clear screen and reposition cursor
+        print!("\x1b[2J\x1b[H");
+
+        println!("+------------------------------------------------------------+");
+        println!("|  Qwen Code 资源监控仪表盘 (v{})                              |", env!("CARGO_PKG_VERSION"));
+        println!("+------------------------------------------------------------+");
+        println!("|  系统物理内存: {:.1} GB  |  已用: {:.1} GB  |  逻辑处理器: {:<3} |",
+            total_mem_gb, used_mem_gb, phys_cores);
+        println!("+------------------------------------------------------------+");
+
+        if state.instances.is_empty() {
+            println!("|  (无注册实例 — 等待 Qwen 进程启动...)                        |");
         } else {
-            "1 (不可读)".to_string()
+            println!("  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
+                "PID", "CPU 核", "内存(MB)", "最大(MB)", "状态", "最后心跳");
+            println!("  ------  ------  ---------  ---------  --------  ----------------");
+
+            for inst in state.instances.values() {
+                let alive = sys.process(sysinfo::Pid::from_u32(inst.pid)).is_some();
+                let state_str = if alive { "running" } else { "dead" };
+                let cores = inst.bound_cores.iter()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let hb_short = if inst.last_heartbeat.len() >= 19 {
+                    &inst.last_heartbeat[11..19]
+                } else {
+                    "-"
+                };
+                println!("  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
+                    inst.pid, cores, inst.working_set_mb, inst.max_allowed_memory_mb,
+                    state_str, hb_short);
+            }
         }
-    } else {
-        "0".to_string()
-    };
 
-    println!("+------------------------------------------------------------+");
-    println!("|  注册实例: {}  |  锁文件状态: {:<42} |",
-        total_instances, if stale_lock == "0" { "正常" } else { &stale_lock });
-    println!("+------------------------------------------------------------+");
+        // Lock file status
+        let lock_path = state::state_file_path().with_extension("json.lock");
+        let lock_status = if lock_path.exists() {
+            if let Ok(pid_str) = std::fs::read_to_string(&lock_path) {
+                if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                    let mut s = sysinfo::System::new();
+                    s.refresh_process(sysinfo::Pid::from_u32(pid));
+                    if s.process(sysinfo::Pid::from_u32(pid)).is_some() {
+                        "正常"
+                    } else {
+                        "僵死锁"
+                    }
+                } else { "损坏" }
+            } else { "不可读" }
+        } else { "无锁" };
 
-    ExitCode::SUCCESS
+        println!("+------------------------------------------------------------+");
+        println!("|  注册实例: {:<3}  |  锁文件: {:<46} |", total_instances, lock_status);
+        println!("+------------------------------------------------------------+");
+        println!("|  按 Ctrl+C 退出                                             |");
+        println!("+------------------------------------------------------------+");
+
+        let _ = std::io::stdout().flush();
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
 }
 
 #[cfg(test)]

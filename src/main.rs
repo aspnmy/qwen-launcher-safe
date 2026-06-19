@@ -82,8 +82,8 @@ enum Cli {
         #[arg(long)]
         parent_pid: Option<u32>,
     },
-    /// 显示当前资源监控状态（一次性快照）
-    Status,
+    /// 启动实时资源监控仪表盘（前台刷新）
+    Dashboard,
     /// 初始化或更新 .config 配置文件
     #[command(alias = "init")]
     InitConfig {
@@ -247,7 +247,7 @@ fn main() -> ExitCode {
             }
             launcher::run(&qwen_args)
         }
-        Ok(Cli::Status) => monitor::run_status(),
+        Ok(Cli::Dashboard) => monitor::run_dashboard(),
         Ok(Cli::Monitor {
             interval,
             parent_pid,
