@@ -127,7 +127,6 @@ fn check_instances() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-
 /// 实时资源监控仪表盘（前台刷新）
 ///
 /// 读取共享状态文件和系统信息，每 2 秒刷新全屏仪表盘。
@@ -142,8 +141,8 @@ pub fn run_dashboard() -> ExitCode {
     #[cfg(windows)]
     unsafe {
         use windows_sys::Win32::System::Console::{
-            GetStdHandle, GetConsoleMode, SetConsoleMode,
-            ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_OUTPUT_HANDLE,
+            GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+            STD_OUTPUT_HANDLE,
         };
         let h = GetStdHandle(STD_OUTPUT_HANDLE);
         if !h.is_null() {
@@ -192,18 +191,28 @@ pub fn run_dashboard() -> ExitCode {
 
         let sys_time = chrono::Local::now().format("%H:%M:%S").to_string();
         println!("+------------------------------------------------------------------+");
-        println!("|  Agent 资源监控仪表盘 (v{})                  系统时间: {} |", env!("CARGO_PKG_VERSION"), sys_time);
+        println!(
+            "|  Agent 资源监控仪表盘 (v{})                  系统时间: {} |",
+            env!("CARGO_PKG_VERSION"),
+            sys_time
+        );
         println!("+------------------------------------------------------------------+");
-        println!("|  系统物理内存: {:.1} GB  |  已用: {:.1} GB  |  逻辑处理器: {:<3}       |",
-            total_mem_gb, used_mem_gb, phys_cores);
+        println!(
+            "|  系统物理内存: {:.1} GB  |  已用: {:.1} GB  |  逻辑处理器: {:<3}       |",
+            total_mem_gb, used_mem_gb, phys_cores
+        );
         println!("+------------------------------------------------------------------+");
 
         if state.instances.is_empty() {
             println!("|  (无注册实例 — 等待 Agent 进程启动...)                         |");
         } else {
-            println!("  {:<10}  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
-                "Agent", "PID", "CPU 核", "内存(MB)", "最大(MB)", "状态", "最后心跳");
-            println!("  ---------  ------  ------  ---------  ---------  --------  ----------------");
+            println!(
+                "  {:<10}  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
+                "Agent", "PID", "CPU 核", "内存(MB)", "最大(MB)", "状态", "最后心跳"
+            );
+            println!(
+                "  ---------  ------  ------  ---------  ---------  --------  ----------------"
+            );
 
             // Sort by agent_name then pid
             let mut sorted: Vec<_> = state.instances.values().collect();
@@ -212,7 +221,9 @@ pub fn run_dashboard() -> ExitCode {
             for inst in &sorted {
                 let alive = sys.process(sysinfo::Pid::from_u32(inst.pid)).is_some();
                 let state_str = if alive { "running" } else { "dead" };
-                let cores = inst.bound_cores.iter()
+                let cores = inst
+                    .bound_cores
+                    .iter()
                     .map(|c| c.to_string())
                     .collect::<Vec<_>>()
                     .join(",");
@@ -221,10 +232,21 @@ pub fn run_dashboard() -> ExitCode {
                 } else {
                     "-"
                 };
-                let display_name = if inst.agent_name.is_empty() { "-" } else { &inst.agent_name };
-                println!("  {:<10}  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
-                    display_name, inst.pid, cores, inst.working_set_mb, inst.max_allowed_memory_mb,
-                    state_str, hb_short);
+                let display_name = if inst.agent_name.is_empty() {
+                    "-"
+                } else {
+                    &inst.agent_name
+                };
+                println!(
+                    "  {:<10}  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
+                    display_name,
+                    inst.pid,
+                    cores,
+                    inst.working_set_mb,
+                    inst.max_allowed_memory_mb,
+                    state_str,
+                    hb_short
+                );
             }
         }
 
@@ -240,12 +262,21 @@ pub fn run_dashboard() -> ExitCode {
                     } else {
                         "僵死锁"
                     }
-                } else { "损坏" }
-            } else { "不可读" }
-        } else { "无锁" };
+                } else {
+                    "损坏"
+                }
+            } else {
+                "不可读"
+            }
+        } else {
+            "无锁"
+        };
 
         println!("+------------------------------------------------------------+");
-        println!("|  注册实例: {:<3}  |  锁文件: {:<46} |", total_instances, lock_status);
+        println!(
+            "|  注册实例: {:<3}  |  锁文件: {:<46} |",
+            total_instances, lock_status
+        );
         println!("+------------------------------------------------------------+");
         println!("|  按 Ctrl+C 退出                                             |");
         println!("+------------------------------------------------------------+");
@@ -285,7 +316,11 @@ pub fn run_json() -> ExitCode {
     }
 
     let lock_path = state::state_file_path().with_extension("json.lock");
-    let lock_status = if lock_path.exists() { "locked" } else { "normal" };
+    let lock_status = if lock_path.exists() {
+        "locked"
+    } else {
+        "normal"
+    };
 
     let output = serde_json::json!({
         "system": {
@@ -298,7 +333,10 @@ pub fn run_json() -> ExitCode {
         "lock_status": lock_status
     });
 
-    println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&output).unwrap_or_default()
+    );
     ExitCode::SUCCESS
 }
 
