@@ -385,6 +385,7 @@ pub fn self_exe_path() -> io::Result<PathBuf> {
 }
 
 #[cfg(test)]
+#[allow(unnameable_test_items, dead_code, unused_imports)]
 mod tests {
     use super::*;
 
@@ -580,6 +581,7 @@ fn test_is_qwen_process_rejects_own_binary() {
 }
 
     #[test]
+    #[allow(unused_imports)]
     fn test_verify_cmd_node_exe_success() {
         use std::io::Write;
         let tmp = std::env::temp_dir().join("agent_launcher_test_verify_cmd");
@@ -599,6 +601,7 @@ fn test_is_qwen_process_rejects_own_binary() {
     }
 
     #[test]
+    #[allow(unused_imports)]
     fn test_verify_cmd_node_exe_missing_node() {
         use std::io::Write;
         let tmp = std::env::temp_dir().join("agent_launcher_test_verify_cmd_missing");
@@ -617,6 +620,7 @@ fn test_is_qwen_process_rejects_own_binary() {
     }
 
     #[test]
+    #[allow(unused_imports)]
     fn test_verify_cmd_node_exe_not_cmd_file() {
         use std::io::Write;
         let tmp = std::env::temp_dir().join("agent_launcher_test_verify_exe");
