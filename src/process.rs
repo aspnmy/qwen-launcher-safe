@@ -416,7 +416,10 @@ mod tests {
         let sub = tmp.join("sub");
         std::fs::create_dir(&sub).expect("create subdir");
         let file = sub.join("test.exe");
-        std::fs::File::create(&file).expect("create file").write_all(b"fake").unwrap();
+        std::fs::File::create(&file)
+            .expect("create file")
+            .write_all(b"fake")
+            .unwrap();
 
         // construct path with .. : <tmp>/sub/../sub/test.exe
         let dotdot = sub.join("..").join("sub").join("test.exe");
@@ -424,25 +427,45 @@ mod tests {
 
         // BUG: PathBuf::from does not resolve ..
         let unresolved = std::path::PathBuf::from(dotdot.to_str().unwrap());
-        assert!(unresolved.to_str().unwrap().contains(".."), "PathBuf::from should NOT resolve ..");
+        assert!(
+            unresolved.to_str().unwrap().contains(".."),
+            "PathBuf::from should NOT resolve .."
+        );
 
         // FIX: canonicalize resolves .. to canonical path
         let resolved = dotdot.canonicalize().expect("canonicalize should succeed");
-        assert!(!resolved.to_str().unwrap().contains(".."), "canonical path should not contain ..");
+        assert!(
+            !resolved.to_str().unwrap().contains(".."),
+            "canonical path should not contain .."
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
-    #[test]
-    fn test_is_qwen_process_rejects_own_binary() {
-        // After fix: launcher's own binary and monitor should NOT be detected as Qwen
-        let monitor_cmd = vec!["agent-launcher-safe.exe".into(), "monitor".into(), "--interval".into(), "10".into()];
-        assert!(!is_qwen_process(&monitor_cmd), "own binary should NOT match after fix");
+#[test]
+fn test_is_qwen_process_rejects_own_binary() {
+    // After fix: launcher's own binary and monitor should NOT be detected as Qwen
+    let monitor_cmd = vec![
+        "agent-launcher-safe.exe".into(),
+        "monitor".into(),
+        "--interval".into(),
+        "10".into(),
+    ];
+    assert!(
+        !is_qwen_process(&monitor_cmd),
+        "own binary should NOT match after fix"
+    );
 
-        let launch_cmd = vec!["agent-launcher-safe.exe".into(), "launch".into()];
-        assert!(!is_qwen_process(&launch_cmd), "own launch process should NOT match");
+    let launch_cmd = vec!["agent-launcher-safe.exe".into(), "launch".into()];
+    assert!(
+        !is_qwen_process(&launch_cmd),
+        "own launch process should NOT match"
+    );
 
-        // Actual Qwen processes should still match
-        let qwen_cmd = vec!["node.exe".into(), "qwen".into(), "serve".into()];
-        assert!(is_qwen_process(&qwen_cmd), "actual qwen process should still match");
-    }
+    // Actual Qwen processes should still match
+    let qwen_cmd = vec!["node.exe".into(), "qwen".into(), "serve".into()];
+    assert!(
+        is_qwen_process(&qwen_cmd),
+        "actual qwen process should still match"
+    );
+}
