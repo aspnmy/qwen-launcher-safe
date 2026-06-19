@@ -87,18 +87,21 @@ pub fn run(args: &[String]) -> ExitCode {
         }
     };
 
-    // 2.5. 启动独立监控窗口（在 Qwen 加载前弹出）
-    if let Ok(exe) = process::self_exe_path() {
-        let exe_str = exe.to_string_lossy().to_string();
-        info!("启动监控仪表盘窗口...");
-        // 不预加引号——Rust Command 原生处理含空格路径的引号
-        match std::process::Command::new("cmd")
-            .args(["/c", "start", "", &exe_str, "dashboard"])
-            .spawn()
-        {
-            Ok(_) => info!("监控窗口已启动"),
-            Err(e) => warn!("无法启动监控窗口: {}", e),
+    // 2.5. 启动独立监控窗口（单实例：已运行则跳过）
+    if !process::dashboard_already_running() {
+        if let Ok(exe) = process::self_exe_path() {
+            let exe_str = exe.to_string_lossy().to_string();
+            info!("启动监控仪表盘窗口...");
+            match std::process::Command::new("cmd")
+                .args(["/c", "start", "", &exe_str, "dashboard"])
+                .spawn()
+            {
+                Ok(_) => info!("监控窗口已启动"),
+                Err(e) => warn!("无法启动监控窗口: {}", e),
+            }
         }
+    } else {
+        info!("监控窗口已在运行，跳过");
     }
 
     // 2.6. 快速检测：qwen.cmd 包装器可能瞬间退出（node.exe 不存在）

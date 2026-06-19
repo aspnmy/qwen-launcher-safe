@@ -379,6 +379,18 @@ pub fn spawn_qwen(cmd: &Path, args: &[String], cwd: Option<&std::path::Path>) ->
     command.spawn()
 }
 
+/// 检测是否已有 dashboard 进程在运行（避免重复弹窗）
+pub fn dashboard_already_running() -> bool {
+    let sys = sysinfo::System::new_all();
+    for proc in sys.processes().values() {
+        let cmd = proc.cmd().join(" ");
+        if cmd.contains("agent-launcher-safe") && cmd.contains("dashboard") {
+            return true;
+        }
+    }
+    false
+}
+
 /// 返回当前可执行文件路径（用于自调用生成 monitor 子进程）
 pub fn self_exe_path() -> io::Result<PathBuf> {
     std::env::current_exe()
