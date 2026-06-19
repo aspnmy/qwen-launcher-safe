@@ -77,7 +77,7 @@ pub fn run(args: &[String]) -> ExitCode {
     info!("基线 Qwen 进程: {} 个", baseline.len());
 
     // 2. 非阻塞启动 Qwen
-    let qwen_child = match process::spawn_qwen(&qwen_cmd, args, working_dir.as_deref()) {
+    let mut qwen_child = match process::spawn_qwen(&qwen_cmd, args, working_dir.as_deref()) {
         Ok(child) => {
             info!("Qwen PID: {}", child.id());
             child
@@ -87,6 +87,20 @@ pub fn run(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+
+    // 2.5. 快速检测：qwen.cmd 包装器可能瞬间退出（node.exe 不存在）
+    {
+        use std::thread;
+        use std::time::Duration;
+        thread::sleep(Duration::from_millis(800));
+        if let Ok(Some(status)) = qwen_child.try_wait() {
+            error!(
+                "Qwen 启动失败: qwen.cmd 已退出 (code: {})。node.exe 可能不存在或启动失败",
+                status
+            );
+            return ExitCode::from(1);
+        }
+    }
 
     // 3. 轮询发现子进程（至多 5 秒）
     let new_pids = poll_new_qwen_processes(&baseline);

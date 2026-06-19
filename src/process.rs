@@ -94,6 +94,32 @@ fn resolve_qwen_entry(path: std::path::PathBuf) -> std::path::PathBuf {
     path
 }
 
+/// 验证 .cmd 包装器能引用到预期的 node.exe
+///
+/// 当 qwen 入口是 .cmd 文件时，检查同安装目录下 `node/node.exe` 是否存在。
+/// 不存在则返回错误，避免 spawn 后 cmd 包装器因找不到 node.exe 而静默失败。
+fn verify_cmd_node_exe(cmd_path: &std::path::Path) -> std::io::Result<()> {
+    if let Some(ext) = cmd_path.extension() {
+        if ext.eq_ignore_ascii_case("cmd") {
+            if let Some(bin_dir) = cmd_path.parent() {
+                if let Some(root) = bin_dir.parent() {
+                    let node_exe = root.join("node").join("node.exe");
+                    if !node_exe.exists() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            format!(
+                                "qwen.cmd 引用的 node.exe 不存在: {:?}\n请确认 Qwen Code 安装完整，或运行 agent-launcher-safe init-config 重新配置",
+                                node_exe
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn find_qwen_command() -> io::Result<PathBuf> {
     let cfg = config::read_config();
 
@@ -102,9 +128,10 @@ pub fn find_qwen_command() -> io::Result<PathBuf> {
         if path.exists() {
             let path = strip_verbatim_prefix(
                 path.canonicalize()
-                    .map_or_else(|_| path.clone(), |p| strip_verbatim_prefix(p)),
+                    .map_or_else(|_| path.clone(), strip_verbatim_prefix),
             );
             let path = resolve_qwen_entry(path);
+            verify_cmd_node_exe(&path)?;
             log::info!("qwen 路径: {:?}（来自配置文件）", path);
             return Ok(path);
         }
@@ -551,3 +578,55 @@ fn test_is_qwen_process_rejects_own_binary() {
         "actual qwen process should still match"
     );
 }
+
+    #[test]
+    fn test_verify_cmd_node_exe_success() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join("agent_launcher_test_verify_cmd");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let bin_dir = tmp.join("bin");
+        let node_dir = tmp.join("node");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::create_dir_all(&node_dir).unwrap();
+
+        let cmd_path = bin_dir.join("qwen.cmd");
+        std::fs::write(&cmd_path, b"@echo off").unwrap();
+        std::fs::write(node_dir.join("node.exe"), b"fake").unwrap();
+
+        assert!(verify_cmd_node_exe(&cmd_path).is_ok());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_verify_cmd_node_exe_missing_node() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join("agent_launcher_test_verify_cmd_missing");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let bin_dir = tmp.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+
+        let cmd_path = bin_dir.join("qwen.cmd");
+        std::fs::write(&cmd_path, b"@echo off").unwrap();
+
+        let result = verify_cmd_node_exe(&cmd_path);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_verify_cmd_node_exe_not_cmd_file() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join("agent_launcher_test_verify_exe");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let exe_path = tmp.join("qwen.exe");
+        std::fs::write(&exe_path, b"fake").unwrap();
+
+        assert!(verify_cmd_node_exe(&exe_path).is_ok());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
