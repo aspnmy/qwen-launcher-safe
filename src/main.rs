@@ -32,6 +32,7 @@ use std::process::ExitCode;
 use clap::Parser;
 
 mod config;
+mod dashboard;
 mod launcher;
 mod monitor;
 mod process;
@@ -251,7 +252,7 @@ fn main() -> ExitCode {
             launcher::run(&qwen_args)
         }
         Ok(Cli::Json) => monitor::run_json(),
-        Ok(Cli::Dashboard) => monitor::run_dashboard(),
+        Ok(Cli::Dashboard) => dashboard::run(),
         Ok(Cli::Monitor {
             interval,
             parent_pid,
