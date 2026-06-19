@@ -231,8 +231,7 @@ impl StateFileLock {
             write_state_file(&empty)?;
         }
 
-        const MAX_RETRIES: u32 = 10;
-        const RETRY_DELAY_MS: u64 = 500;
+        const MAX_RETRIES: u32 = 15;
         let mut last_err = None;
 
         for attempt in 0..MAX_RETRIES {
@@ -246,7 +245,14 @@ impl StateFileLock {
                 Err(e) => {
                     last_err = Some(e);
                     if attempt < MAX_RETRIES - 1 {
-                        std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
+                        let delay_ms = 200 * (1u64 << attempt.min(5)); // 200,400,800,1600,3200,3200...
+                        log::warn!(
+                            "状态文件锁被占用，第 {}/{} 次重试 ({}ms 后)...",
+                            attempt + 1,
+                            MAX_RETRIES,
+                            delay_ms
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     }
                 }
             }
