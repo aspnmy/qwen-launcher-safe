@@ -19,7 +19,6 @@ use std::time::{Duration, Instant};
 
 use log::{error, info, warn};
 
-
 /// Ctrl+C 触发时设为 true，主循环检测后触发优雅退出
 static SHOULD_EXIT: AtomicBool = AtomicBool::new(false);
 
