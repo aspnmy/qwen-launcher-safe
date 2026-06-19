@@ -1,6 +1,6 @@
 [package]
 name = "agent-launcher-safe"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "Qwen Code 资源保护启动器 — Rust 重构版"
 
