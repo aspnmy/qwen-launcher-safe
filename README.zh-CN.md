@@ -3,7 +3,7 @@
 > **English version: [README.md](./README.md)**
 ![仪表盘](./docs/dashboard.png)
 
-\n![仪表盘](./docs/dashboard.png)
+![仪表盘](./docs/dashboard.png)
 > **更多文档：[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**
 
 纯RUST编写 — 通用 CLI agent 资源保护启动器 — 为每agent实例强制执行 CPU/内存边界。
