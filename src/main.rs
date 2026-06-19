@@ -82,6 +82,8 @@ enum Cli {
         #[arg(long)]
         parent_pid: Option<u32>,
     },
+    /// 输出当前资源状态为 JSON（供 MCP/脚本调用）
+    Json,
     /// 启动实时资源监控仪表盘（前台刷新）
     Dashboard,
     /// 初始化或更新 .config 配置文件
@@ -248,6 +250,7 @@ fn main() -> ExitCode {
             }
             launcher::run(&qwen_args)
         }
+        Ok(Cli::Json) => monitor::run_json(),
         Ok(Cli::Dashboard) => monitor::run_dashboard(),
         Ok(Cli::Monitor {
             interval,

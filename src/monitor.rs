@@ -238,6 +238,53 @@ pub fn run_dashboard() -> ExitCode {
     }
 }
 
+/// 输出当前资源状态为 JSON（供 MCP agent / 脚本调用）
+pub fn run_json() -> ExitCode {
+    let state = match state::read_state_file() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", serde_json::json!({"error": e.to_string()}));
+            return ExitCode::from(1);
+        }
+    };
+
+    let mut sys = sysinfo::System::new_all();
+    sys.refresh_all();
+    sys.refresh_memory();
+
+    let mut instances = Vec::new();
+    for inst in state.instances.values() {
+        let alive = sys.process(sysinfo::Pid::from_u32(inst.pid)).is_some();
+        instances.push(serde_json::json!({
+            "agent_name": inst.agent_name,
+            "pid": inst.pid,
+            "bound_cores": inst.bound_cores,
+            "working_set_mb": inst.working_set_mb,
+            "max_allowed_memory_mb": inst.max_allowed_memory_mb,
+            "state": if alive { "running" } else { "dead" },
+            "priority": inst.priority,
+            "last_heartbeat": inst.last_heartbeat,
+        }));
+    }
+
+    let lock_path = state::state_file_path().with_extension("json.lock");
+    let lock_status = if lock_path.exists() { "locked" } else { "normal" };
+
+    let output = serde_json::json!({
+        "system": {
+            "total_memory_gb": format!("{:.1}", sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0)),
+            "used_memory_gb": format!("{:.1}", sys.used_memory() as f64 / (1024.0 * 1024.0 * 1024.0)),
+            "physical_cores": state.global_state.physical_cores
+        },
+        "instances": instances,
+        "total_instances": state.instances.len(),
+        "lock_status": lock_status
+    });
+
+    println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
+    ExitCode::SUCCESS
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
