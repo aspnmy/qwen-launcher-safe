@@ -3,7 +3,7 @@
 > **简体中文版请参阅：[README.zh-CN.md](./README.zh-CN.md)**
 > **更多文档：[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**
 
-A Rust rewrite of the [qwen-launcher.ps1](https://github.com/aspnmy/qwen-coder) — a resource-protected wrapper for launching Qwen Code CLI.
+A Rust rewrite of the [agent-launcher.ps1](https://github.com/aspnmy/qwen-coder) — a general-purpose resource-protected launcher for CLI agents — enforces CPU/memory boundaries per instance.
 
 ## Features
 
