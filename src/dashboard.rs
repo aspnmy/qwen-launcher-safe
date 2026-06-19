@@ -194,6 +194,36 @@ impl eframe::App for DashboardApp {
     }
 }
 
+/// 加载系统 CJK 字体（中文显示支持）
+fn load_chinese_font() -> Option<egui::FontData> {
+    let paths = [
+        "C:\\Windows\\Fonts\\msyh.ttc",
+        "C:\\Windows\\Fonts\\simsun.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    ];
+    for path in &paths {
+        if let Ok(data) = std::fs::read(path) {
+            log::info!("加载中文字体: {}", path);
+            return Some(egui::FontData::from_owned(data));
+        }
+    }
+    log::warn!("未找到中文字体，中文可能显示为口");
+    None
+}
+
+/// 配置 egui 字体以支持中文
+fn setup_chinese_fonts(ctx: &egui::Context) {
+    if let Some(font_data) = load_chinese_font() {
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert("chinese".into(), std::sync::Arc::new(font_data));
+        if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+            family.insert(0, "chinese".into());
+        }
+        ctx.set_fonts(fonts);
+    }
+}
+
 /// 启动 egui 仪表盘窗口
 pub fn run() -> std::process::ExitCode {
     let options = eframe::NativeOptions {
@@ -206,7 +236,10 @@ pub fn run() -> std::process::ExitCode {
     let _ = eframe::run_native(
         "Agent 资源监控仪表盘",
         options,
-        Box::new(|_cc| Ok(Box::new(DashboardApp::new()))),
+        Box::new(|cc| {
+            setup_chinese_fonts(&cc.egui_ctx);
+            Ok(Box::new(DashboardApp::new()))
+        }),
     );
     std::process::ExitCode::SUCCESS
 }
