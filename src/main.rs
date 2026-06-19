@@ -11,19 +11,19 @@
 //!
 //! ```bash
 //! # 双击启动（无参） — 等价于 launch 无参数
-//! qwen-launcher-safe.exe
+//! agent-launcher-safe.exe
 //!
 //! # 启动 Qwen 并传递参数
-//! qwen-launcher-safe launch -- --model qwen-max
+//! agent-launcher-safe launch -- --model qwen-max
 //!
 //! # 首次使用：交互式配置向导
-//! qwen-launcher-safe init
+//! agent-launcher-safe init
 //!
 //! # 配置 qwen 路径
-//! qwen-launcher-safe init-config --qwen-path "C:\path\to\qwen.exe"
+//! agent-launcher-safe init-config --qwen-path "C:\path\to\qwen.exe"
 //!
 //! # 查看配置
-//! qwen-launcher-safe init-config --show
+//! agent-launcher-safe init-config --show
 //! ```
 
 use std::io::{self, BufRead};
@@ -64,7 +64,7 @@ fn normalize_input(s: &str) -> String {
 
 /// Qwen Code 资源保护启动器 — Rust 重构版
 #[derive(Parser, Debug)]
-#[command(name = "qwen-launcher-safe", version, about)]
+#[command(name = "agent-launcher-safe", version, about)]
 enum Cli {
     /// 启动 Qwen 并自动注册资源监控
     Launch {

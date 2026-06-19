@@ -59,7 +59,7 @@ pub fn find_qwen_command() -> io::Result<PathBuf> {
 
     Err(io::Error::new(
         io::ErrorKind::NotFound,
-        "qwenPath 未配置。请运行 `qwen-launcher-safe init-config` 进行配置",
+        "qwenPath 未配置。请运行 `agent-launcher-safe init-config` 进行配置",
     ))
 }
 

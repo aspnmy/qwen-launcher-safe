@@ -1,4 +1,4 @@
-# qwen-launcher-safe
+# agent-launcher-safe
 
 > **English version: [README.md](./README.md)**
 > **更多文档：[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**
@@ -12,7 +12,7 @@
 - **`init` 别名** — `init` 是 `init-config` 的快捷别名
 - **CPU 核绑定** — 每个 Qwen 实例获得独占物理 CPU 核，保证性能稳定性
 - **共享状态文件** — 实例注册表持久化在 `%TEMP%\qwen-resource-state.json`，与现有 PowerShell `qwen-resource-monitor` 技能兼容
-- **后台监控** — 自生成子进程 (`qwen-launcher-safe monitor`) 定时检查注册实例内存使用，清理已消失的 PID
+- **后台监控** — 自生成子进程 (`agent-launcher-safe monitor`) 定时检查注册实例内存使用，清理已消失的 PID
 - **优雅清理** — Qwen 退出时自动停止监控、注销所有已注册实例
 - **工作目录配置** — 配置文件中的 `workingDir` 字段设置 Qwen 子进程工作目录，使 project 级 `.qwen/skills/` 技能可自动加载
 - **实时仪表盘** — 启动时显示 PID、CPU 核、内存使用 (MB) 和状态，每 2 秒刷新
@@ -45,20 +45,20 @@
 
 ```powershell
 # 首次使用：进入交互式向导（提示输入 qwen 路径、内存限制、监控间隔）
-qwen-launcher-safe init
+agent-launcher-safe init
 ```
 
 ## 安装
 
 ```bash
-cargo install --git https://github.com/aspnmy/qwen-launcher-safe.git
+cargo install --git https://github.com/aspnmy/agent-launcher-safe.git
 ```
 
 或从源码构建：
 
 ```bash
-git clone https://github.com/aspnmy/qwen-launcher-safe.git
-cd qwen-launcher-safe
+git clone https://github.com/aspnmy/agent-launcher-safe.git
+cd agent-launcher-safe
 cargo build --release
 ```
 
@@ -68,10 +68,10 @@ cargo build --release
 
 ```powershell
 # 基本启动（后续参数透传给 qwen）
-qwen-launcher-safe launch -- --model qwen-max
+agent-launcher-safe launch -- --model qwen-max
 
 # 或从克隆目录直接运行
-.\target\release\qwen-launcher-safe.exe launch --
+.\target\release\agent-launcher-safe.exe launch --
 ```
 
 ### 首次使用（交互式向导）
@@ -80,33 +80,33 @@ qwen-launcher-safe launch -- --model qwen-max
 
 ```powershell
 # 交互式配置（提示输入 qwen 路径、内存限制、监控间隔）
-qwen-launcher-safe init
+agent-launcher-safe init
 ```
 
 ### 直接配置 qwen 路径
 
 ```powershell
 # 手动指定 qwen 路径
-qwen-launcher-safe init-config --qwen-path "C:\Users\nasAdmin\.cherrystudio\bin\qwen.exe"
+agent-launcher-safe init-config --qwen-path "C:\Users\nasAdmin\.cherrystudio\bin\qwen.exe"
 
 # 查看当前配置
-qwen-launcher-safe init-config --show
+agent-launcher-safe init-config --show
 ```
 
 ### 自定义资源限制
 
 ```powershell
 # 设置每个实例内存限制为 2GB
-qwen-launcher-safe init-config --max-memory-mb 2048
+agent-launcher-safe init-config --max-memory-mb 2048
 
 # 设置监控轮询间隔为 30 秒
-qwen-launcher-safe init-config --monitor-interval 30
+agent-launcher-safe init-config --monitor-interval 30
 ```
 
 ### 独立运行监控
 
 ```powershell
-qwen-launcher-safe monitor -i 10
+agent-launcher-safe monitor -i 10
 ```
 
 ## 架构

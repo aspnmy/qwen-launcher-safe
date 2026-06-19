@@ -1,4 +1,4 @@
-# qwen-launcher-safe
+# agent-launcher-safe
 
 > **简体中文版请参阅：[README.zh-CN.md](./README.zh-CN.md)**
 > **更多文档：[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**
@@ -15,12 +15,12 @@ A Rust rewrite of the [qwen-launcher.ps1](https://github.com/aspnmy/qwen-coder) 
 
 ```powershell
 # First time: enters interactive wizard (no config → prompts for qwen path, memory, interval)
-qwen-launcher-safe init
+agent-launcher-safe init
 ```
 
 - **CPU Core Binding** — Each Qwen instance gets an exclusive physical CPU core for consistent performance.
 - **Shared State File** — Instance registry persists at `%TEMP%\qwen-resource-state.json`, compatible with the existing PowerShell `qwen-resource-monitor` skill.
-- **Background Monitor** — A self-spawned child process (`qwen-launcher-safe monitor`) periodically checks registered instances' memory usage and cleans up vanished PIDs.
+- **Background Monitor** — A self-spawned child process (`agent-launcher-safe monitor`) periodically checks registered instances' memory usage and cleans up vanished PIDs.
 - **Graceful Cleanup** — On Qwen exit, the monitor is killed and all registered instances are unregistered from the shared state file.
 - **Working Directory Config** — `workingDir` in config sets the Qwen child process working directory, enabling project-level `.qwen/skills/` auto-loading.
 - **Real-time Dashboard** — During launch, a console dashboard shows PID, CPU core, memory usage (MB), and status per instance, refreshed every 2 seconds.
@@ -52,14 +52,14 @@ Every push and PR triggers a CI check via `.github/workflows/ci.yml`:
 ## Installation
 
 ```bash
-cargo install --git https://github.com/aspnmy/qwen-launcher-safe.git
+cargo install --git https://github.com/aspnmy/agent-launcher-safe.git
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/aspnmy/qwen-launcher-safe.git
-cd qwen-launcher-safe
+git clone https://github.com/aspnmy/agent-launcher-safe.git
+cd agent-launcher-safe
 cargo build --release
 ```
 
@@ -69,10 +69,10 @@ cargo build --release
 
 ```powershell
 # Basic launch (passes remaining args to qwen verbatim)
-qwen-launcher-safe launch -- --model qwen-max
+agent-launcher-safe launch -- --model qwen-max
 
 # Or from the cloned directory
-.\target\release\qwen-launcher-safe.exe launch --
+.\target\release\agent-launcher-safe.exe launch --
 ```
 
 ### First use (interactive wizard)
@@ -81,33 +81,33 @@ No config exists? `init`, `init-config`, or `launch` enters the setup wizard:
 
 ```powershell
 # Interactive setup (prompts for qwen path, memory limit, monitor interval)
-qwen-launcher-safe init
+agent-launcher-safe init
 ```
 
 ### Configure qwen path (direct)
 
 ```powershell
 # Specify qwen path explicitly
-qwen-launcher-safe init-config --qwen-path "C:\Users\nasAdmin\.cherrystudio\bin\qwen.exe"
+agent-launcher-safe init-config --qwen-path "C:\Users\nasAdmin\.cherrystudio\bin\qwen.exe"
 
 # View current config
-qwen-launcher-safe init-config --show
+agent-launcher-safe init-config --show
 ```
 
 ### Customize resource limits
 
 ```powershell
 # Set memory limit to 2GB per instance
-qwen-launcher-safe init-config --max-memory-mb 2048
+agent-launcher-safe init-config --max-memory-mb 2048
 
 # Set monitor polling interval to 30 seconds
-qwen-launcher-safe init-config --monitor-interval 30
+agent-launcher-safe init-config --monitor-interval 30
 ```
 
 ### Run monitor independently
 
 ```powershell
-qwen-launcher-safe monitor -i 10
+agent-launcher-safe monitor -i 10
 ```
 
 ## Architecture
