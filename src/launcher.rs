@@ -117,11 +117,7 @@ pub fn run(args: &[String]) -> ExitCode {
 
     // 4. 注册实例 + 绑定 CPU
 
-    // 先清理之前崩溃残留的僵死实例
-    match state_file_lock_scope() {
-        Ok(mut state) => state::cleanup_stale_entries(&mut state),
-        Err(e) => warn!("清理僵死实例失败: {}", e),
-    }
+    // 僵死实例清理已合并到 register_instances() 内部（同一锁 scope）
 
     let registered_keys = match register_instances(&new_pids, cfg.max_memory_mb) {
         Ok(keys) => {
@@ -220,22 +216,6 @@ fn poll_new_qwen_processes(baseline: &HashSet<u32>) -> Vec<u32> {
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
     }
 }
-
-/// 获取锁后执行僵死实例清理
-///
-/// 封装 read→cleanup→write 原子操作。
-fn state_file_lock_scope() -> io::Result<state::StateFile> {
-    let _lock = state::StateFileLock::acquire()?;
-    let mut state = state::read_state_file()?;
-    state::cleanup_stale_entries(&mut state);
-    state::write_state_file(&state)?;
-    Ok(state)
-}
-
-/// 从核心负载表中选择最优核心
-///
-/// Phase 1: 优先完全空闲的核心（不在 `core_load` 中）
-/// Phase 2: 无空闲核时，选负载最低的核均匀分摊
 fn select_best_core(phys_cores: u32, core_load: &HashMap<u32, u32>) -> u32 {
     (0..phys_cores)
         .find(|c| !core_load.contains_key(c))
@@ -255,6 +235,7 @@ fn select_best_core(phys_cores: u32, core_load: &HashMap<u32, u32>) -> u32 {
 fn register_instances(pids: &[u32], max_memory_mb: u64) -> io::Result<Vec<String>> {
     let _lock = state::StateFileLock::acquire()?;
     let mut state = state::read_state_file()?;
+    state::cleanup_stale_entries(&mut state);
     let phys_cores = process::get_processor_count();
     state.global_state.physical_cores = phys_cores;
 

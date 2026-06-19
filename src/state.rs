@@ -230,13 +230,28 @@ impl StateFileLock {
             let empty = StateFile::default();
             write_state_file(&empty)?;
         }
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(false)
-            .open(&path)?;
-        file.lock_exclusive()?;
-        Ok(Self { _file: file })
+
+        const MAX_RETRIES: u32 = 5;
+        const RETRY_DELAY_MS: u64 = 200;
+        let mut last_err = None;
+
+        for attempt in 0..MAX_RETRIES {
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(false)
+                .open(&path)?;
+            match file.lock_exclusive() {
+                Ok(()) => return Ok(Self { _file: file }),
+                Err(e) => {
+                    last_err = Some(e);
+                    if attempt < MAX_RETRIES - 1 {
+                        std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
+                    }
+                }
+            }
+        }
+        Err(last_err.unwrap())
     }
 }
 
