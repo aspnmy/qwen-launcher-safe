@@ -231,8 +231,8 @@ impl StateFileLock {
             write_state_file(&empty)?;
         }
 
-        const MAX_RETRIES: u32 = 5;
-        const RETRY_DELAY_MS: u64 = 200;
+        const MAX_RETRIES: u32 = 10;
+        const RETRY_DELAY_MS: u64 = 500;
         let mut last_err = None;
 
         for attempt in 0..MAX_RETRIES {
