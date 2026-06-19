@@ -168,20 +168,23 @@ impl eframe::App for DashboardApp {
                                 ui.end_row();
 
                                 for row in &self.instances {
-                                    let color = if row.state == "dead" {
+                                    let text_color = if row.state == "dead" {
                                         Color32::RED
                                     } else {
-                                        Color32::WHITE
+                                        ui.style().visuals.text_color()
                                     };
-                                    ui.label(RichText::new(&row.agent_name).color(color));
-                                    ui.label(RichText::new(row.pid.to_string()).color(color));
-                                    ui.label(RichText::new(&row.cores).color(color));
+                                    ui.label(RichText::new(&row.agent_name).color(text_color));
+                                    ui.label(RichText::new(row.pid.to_string()).color(text_color));
+                                    ui.label(RichText::new(&row.cores).color(text_color));
                                     ui.label(
-                                        RichText::new(row.working_set_mb.to_string()).color(color),
+                                        RichText::new(row.working_set_mb.to_string())
+                                            .color(text_color),
                                     );
-                                    ui.label(RichText::new(row.max_mb.to_string()).color(color));
-                                    ui.label(RichText::new(&row.state).color(color));
-                                    ui.label(RichText::new(&row.heartbeat).color(color));
+                                    ui.label(
+                                        RichText::new(row.max_mb.to_string()).color(text_color),
+                                    );
+                                    ui.label(RichText::new(&row.state).color(text_color));
+                                    ui.label(RichText::new(&row.heartbeat).color(text_color));
                                     ui.end_row();
                                 }
                             });
