@@ -127,7 +127,6 @@ fn check_instances() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-
 /// 一次性状态展示（前台界面）
 ///
 /// 读取共享状态文件和系统信息，输出当前资源监控快照。
@@ -155,23 +154,32 @@ pub fn run_status() -> ExitCode {
     let total_instances = state.instances.len();
 
     println!("+------------------------------------------------------------+");
-    println!("|  Qwen Code 资源监控状态 (v{})                              |", env!("CARGO_PKG_VERSION"));
+    println!(
+        "|  Qwen Code 资源监控状态 (v{})                              |",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("+------------------------------------------------------------+");
-    println!("|  系统物理内存: {:.1} GB  |  已用: {:.1} GB  |  逻辑处理器: {}",
-        total_mem_gb, used_mem_gb, phys_cores);
+    println!(
+        "|  系统物理内存: {:.1} GB  |  已用: {:.1} GB  |  逻辑处理器: {}",
+        total_mem_gb, used_mem_gb, phys_cores
+    );
     println!("+------------------------------------------------------------+");
 
     if state.instances.is_empty() {
         println!("|  (无注册实例)                                               |");
     } else {
-        println!("  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
-            "PID", "CPU 核", "内存(MB)", "最大(MB)", "状态", "最后心跳");
+        println!(
+            "  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
+            "PID", "CPU 核", "内存(MB)", "最大(MB)", "状态", "最后心跳"
+        );
         println!("  ------  ------  ---------  ---------  --------  ----------------");
 
         for inst in state.instances.values() {
             let alive = sys.process(sysinfo::Pid::from_u32(inst.pid)).is_some();
             let state_str = if alive { "running" } else { "dead" };
-            let cores = inst.bound_cores.iter()
+            let cores = inst
+                .bound_cores
+                .iter()
                 .map(|c| c.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
@@ -181,9 +189,15 @@ pub fn run_status() -> ExitCode {
             } else {
                 "-"
             };
-            println!("  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
-                inst.pid, cores, inst.working_set_mb, inst.max_allowed_memory_mb,
-                state_str, hb_short);
+            println!(
+                "  {:<8}  {:<8}  {:<10}  {:<10}  {:<8}  {:<16}",
+                inst.pid,
+                cores,
+                inst.working_set_mb,
+                inst.max_allowed_memory_mb,
+                state_str,
+                hb_short
+            );
         }
     }
 
@@ -210,8 +224,15 @@ pub fn run_status() -> ExitCode {
     };
 
     println!("+------------------------------------------------------------+");
-    println!("|  注册实例: {}  |  锁文件状态: {:<42} |",
-        total_instances, if stale_lock == "0" { "正常" } else { &stale_lock });
+    println!(
+        "|  注册实例: {}  |  锁文件状态: {:<42} |",
+        total_instances,
+        if stale_lock == "0" {
+            "正常"
+        } else {
+            &stale_lock
+        }
+    );
     println!("+------------------------------------------------------------+");
 
     ExitCode::SUCCESS
