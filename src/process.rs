@@ -592,57 +592,57 @@ fn test_is_qwen_process_rejects_own_binary() {
     );
 }
 
-    #[test]
-    #[allow(unused_imports)]
-    fn test_verify_cmd_node_exe_success() {
-        use std::io::Write;
-        let tmp = std::env::temp_dir().join("agent_launcher_test_verify_cmd");
-        let _ = std::fs::remove_dir_all(&tmp);
-        let bin_dir = tmp.join("bin");
-        let node_dir = tmp.join("node");
-        std::fs::create_dir_all(&bin_dir).unwrap();
-        std::fs::create_dir_all(&node_dir).unwrap();
+#[test]
+#[allow(unused_imports)]
+fn test_verify_cmd_node_exe_success() {
+    use std::io::Write;
+    let tmp = std::env::temp_dir().join("agent_launcher_test_verify_cmd");
+    let _ = std::fs::remove_dir_all(&tmp);
+    let bin_dir = tmp.join("bin");
+    let node_dir = tmp.join("node");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    std::fs::create_dir_all(&node_dir).unwrap();
 
-        let cmd_path = bin_dir.join("qwen.cmd");
-        std::fs::write(&cmd_path, b"@echo off").unwrap();
-        std::fs::write(node_dir.join("node.exe"), b"fake").unwrap();
+    let cmd_path = bin_dir.join("qwen.cmd");
+    std::fs::write(&cmd_path, b"@echo off").unwrap();
+    std::fs::write(node_dir.join("node.exe"), b"fake").unwrap();
 
-        assert!(verify_cmd_node_exe(&cmd_path).is_ok());
+    assert!(verify_cmd_node_exe(&cmd_path).is_ok());
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
 
-    #[test]
-    #[allow(unused_imports)]
-    fn test_verify_cmd_node_exe_missing_node() {
-        use std::io::Write;
-        let tmp = std::env::temp_dir().join("agent_launcher_test_verify_cmd_missing");
-        let _ = std::fs::remove_dir_all(&tmp);
-        let bin_dir = tmp.join("bin");
-        std::fs::create_dir_all(&bin_dir).unwrap();
+#[test]
+#[allow(unused_imports)]
+fn test_verify_cmd_node_exe_missing_node() {
+    use std::io::Write;
+    let tmp = std::env::temp_dir().join("agent_launcher_test_verify_cmd_missing");
+    let _ = std::fs::remove_dir_all(&tmp);
+    let bin_dir = tmp.join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
 
-        let cmd_path = bin_dir.join("qwen.cmd");
-        std::fs::write(&cmd_path, b"@echo off").unwrap();
+    let cmd_path = bin_dir.join("qwen.cmd");
+    std::fs::write(&cmd_path, b"@echo off").unwrap();
 
-        let result = verify_cmd_node_exe(&cmd_path);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
+    let result = verify_cmd_node_exe(&cmd_path);
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
 
-    #[test]
-    #[allow(unused_imports)]
-    fn test_verify_cmd_node_exe_not_cmd_file() {
-        use std::io::Write;
-        let tmp = std::env::temp_dir().join("agent_launcher_test_verify_exe");
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
+#[test]
+#[allow(unused_imports)]
+fn test_verify_cmd_node_exe_not_cmd_file() {
+    use std::io::Write;
+    let tmp = std::env::temp_dir().join("agent_launcher_test_verify_exe");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
 
-        let exe_path = tmp.join("qwen.exe");
-        std::fs::write(&exe_path, b"fake").unwrap();
+    let exe_path = tmp.join("qwen.exe");
+    std::fs::write(&exe_path, b"fake").unwrap();
 
-        assert!(verify_cmd_node_exe(&exe_path).is_ok());
+    assert!(verify_cmd_node_exe(&exe_path).is_ok());
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
