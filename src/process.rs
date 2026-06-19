@@ -68,6 +68,12 @@ pub fn find_qwen_command() -> io::Result<PathBuf> {
 /// 通过匹配命令行中是否包含 `qwen`、`coder-agent` 或 `cli-agent` 关键字
 /// （大小写不敏感）来识别 Qwen 相关的 node 进程。
 fn is_qwen_process(cmdline: &[String]) -> bool {
+    // Exclude our own binary (agent-launcher-safe) and its monitor subprocess
+    if let Some(first) = cmdline.first() {
+        if first.to_lowercase().contains("agent-launcher-safe") {
+            return false;
+        }
+    }
     let joined = cmdline.join(" ");
     if joined.is_empty() {
         return false;
@@ -401,3 +407,16 @@ mod tests {
         assert!(!re.is_match("node"), "正则不应匹配 'node'");
     }
 }
+    #[test]
+    fn test_is_qwen_process_rejects_own_binary() {
+        // After fix: launcher's own binary and monitor should NOT be detected as Qwen
+        let monitor_cmd = vec!["agent-launcher-safe.exe".into(), "monitor".into(), "--interval".into(), "10".into()];
+        assert!(!is_qwen_process(&monitor_cmd), "own binary should NOT match after fix");
+
+        let launch_cmd = vec!["agent-launcher-safe.exe".into(), "launch".into()];
+        assert!(!is_qwen_process(&launch_cmd), "own launch process should NOT match");
+
+        // Actual Qwen processes should still match
+        let qwen_cmd = vec!["node.exe".into(), "qwen".into(), "serve".into()];
+        assert!(is_qwen_process(&qwen_cmd), "actual qwen process should still match");
+    }
