@@ -102,7 +102,7 @@ pub fn find_qwen_command() -> io::Result<PathBuf> {
         if path.exists() {
             let path = strip_verbatim_prefix(
                 path.canonicalize()
-                    .map_or_else(|_| path.clone(), |p| strip_verbatim_prefix(p)),
+                    .map_or_else(|_| path.clone(), strip_verbatim_prefix),
             );
             let path = resolve_qwen_entry(path);
             log::info!("qwen 路径: {:?}（来自配置文件）", path);
